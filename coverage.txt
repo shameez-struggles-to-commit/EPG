@@ -1,0 +1,5 @@
+EPG Coverage Report
+===================
+Total channels: 8511
+Channels with EPG: 1948 (22.9%)
+Programmes: 191785
