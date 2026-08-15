@@ -17,6 +17,7 @@ import argparse
 import gzip
 import re
 import sys
+import time
 import urllib.request
 import ssl
 from xml.sax.saxutils import quoteattr
@@ -48,8 +49,19 @@ def main():
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     req = urllib.request.Request(URL, headers=UA_H)
-    with urllib.request.urlopen(req, timeout=300, context=ctx) as r:
-        raw = r.read()
+    raw = None
+    last_err = None
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=300, context=ctx) as r:
+                raw = r.read()
+            break
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            print(f'[epgone] attempt {attempt + 1} FAILED: {e} (retrying)', file=sys.stderr)
+            time.sleep(10 * (attempt + 1))
+    if raw is None:
+        raise last_err
     txt = gzip.decompress(raw).decode('utf-8', errors='ignore')
     print(f'[epgone] downloaded {len(raw)} bytes gz, {len(txt)} chars')
 

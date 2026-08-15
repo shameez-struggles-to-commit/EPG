@@ -125,7 +125,7 @@ jobs:
         run: |
           python3 pipeline/fetch_skyhawk.py data/streams.json data/skyhawk.xml --days 2
           python3 pipeline/fetch_dstv.py data/dstv.xml --days 2
-          python3 pipeline/fetch_epgone.py data/epgone_ua.xml
+          python3 pipeline/fetch_epgone.py data/epgone_ua.xml || echo "epg.one fetch failed (non-fatal: Ukraine bonus source)"
 
       - name: Download epg.pw + epgshare01 + index sources
         env:
