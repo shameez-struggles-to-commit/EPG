@@ -43,6 +43,19 @@ def next_dow_date(dow_idx, today=None):
     return t + dt.timedelta(days=(dow_idx - t.weekday()) % 7)
 
 
+def parse12(s):
+    """'12:00 am' / '1:30 pm' -> 'HH:MM' (24h). Returns None on failure."""
+    m = re.match(r'(\d{1,2}):(\d{2})\s*(am|pm)', s.strip(), re.I)
+    if not m:
+        return None
+    hh, mm, ap = int(m.group(1)), int(m.group(2)), m.group(3).lower()
+    if ap == 'pm' and hh != 12:
+        hh += 12
+    if ap == 'am' and hh == 12:
+        hh = 0
+    return f'{hh:02d}:{mm:02d}'
+
+
 # ---------------------------------------------------------------- Geo family
 def _scrape_geo_like(base_url):
     """harpalgeo.tv / geokahani.tv tv-schedule page: <div id="tab0N"> day blocks,
@@ -92,7 +105,67 @@ def scrape_harpalgeo():
 
 
 def scrape_geokahani():
-    return {'geo_kahani_pk': _scrape_geo_like('https://geokahani.tv/tv-schedule/')}
+    """geokahani.tv/program-guide — day h2 headers + showtime-schedule <li> items:
+    <h2>Show Name (Rpt)</h2> ... <strong>12:00 am</strong> - <strong>12:59 am</strong>."""
+    h = fetch('https://geokahani.tv/program-guide/')
+    daymap = {'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
+              'friday': 4, 'saturday': 5, 'sunday': 6}
+    progs = []
+    sections = re.split(
+        r'<h2[^>]*>\s*(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s*</h2>', h)
+    for k in range(1, len(sections) - 1, 2):
+        day = sections[k].lower()
+        if day not in daymap:
+            continue
+        content = sections[k + 1]
+        date = next_dow_date(daymap[day])
+        items = re.findall(
+            r'<h2>([^<]+)</h2>.*?<strong>([^<]+)</strong>\s*-\s*<strong>([^<]+)</strong>',
+            content, re.S)
+        for title, t1, t2 in items:
+            title = title.strip()
+            s, e = parse12(t1), parse12(t2)
+            if not title or not s or not e:
+                continue
+            start = to_utc(date.isoformat(), s)
+            end = to_utc(date.isoformat(), e)
+            if end <= start:
+                end += dt.timedelta(days=1)
+            progs.append((title, start, end))
+    return {'geo_kahani_pk': progs}
+
+
+def scrape_express_entertainment():
+    """expressentertainment.tv/etv-schedule — schedule_check <day> divs, each
+    drama block has <h4 class="tw-drama-name">TITLE</h4> +
+    <h5 class="tw-drama-time">HH:MM</h5> (24h, Pakistan time)."""
+    h = fetch('https://www.expressentertainment.tv/etv-schedule/')
+    daymap = {'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
+              'friday': 4, 'saturday': 5, 'sunday': 6}
+    progs = []
+    parts = re.split(r'schedule_check\s+(\w+)', h)
+    for k in range(1, len(parts) - 1, 2):
+        day = parts[k].lower().strip()
+        if day not in daymap:
+            continue
+        content = parts[k + 1]
+        date = next_dow_date(daymap[day])
+        titles = re.findall(r'<h4 class="tw-drama-name">(.*?)</h4>', content, re.S)
+        times = re.findall(r'<h5 class="tw-drama-time">\s*(\d{1,2}):(\d{2})\s*</h5>', content)
+        for i, ((hh, mm), raw_title) in enumerate(zip(times, titles)):
+            title = re.sub(r'<span.*?</span>', '', raw_title, flags=re.S).strip()
+            if not title:
+                continue
+            start = to_utc(date.isoformat(), f'{hh}:{mm}')
+            if i + 1 < len(times):
+                nh, nm = times[i + 1]
+                end = to_utc(date.isoformat(), f'{nh}:{nm}')
+            else:
+                end = start + dt.timedelta(hours=1)
+            if end <= start:
+                end += dt.timedelta(days=1)
+            progs.append((title, start, end))
+    return {'express_entertainment_pk': progs}
 
 
 # ---------------------------------------------------------------- Hum TV
@@ -191,10 +264,11 @@ def scrape_arydigital():
 
 SCRAPERS = {
     'harpalgeo.tv': scrape_harpalgeo,
-    # geokahani.tv: program-guide page has a different DOM (no tab0N spans); TODO v2
+    'geokahani.tv': scrape_geokahani,
     'hum.tv': scrape_humtv,
     'hum.tv/europe': scrape_humtv_europe,
     'arydigital.tv': scrape_arydigital,
+    'expressentertainment.tv': scrape_express_entertainment,
 }
 
 
