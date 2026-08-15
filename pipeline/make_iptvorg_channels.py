@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+"""Generate filtered *.channels.xml files for iptv-org/epg grabbers.
+
+The iptv-org sites carry thousands of channels (dstv.com alone lists ~3k);
+grabbing everything is slow and wasteful. This script downloads each site's
+channels.xml, keeps only channels whose normalized name matches a provider
+stream (exact, or fuzzy dice >= 0.80), and writes a filtered file the grabber
+consumes via --channels=<file>.
+
+Validated site list from the 2026-08-15 global source audit (all produced
+real programme data in test grabs).
+
+Usage: make_iptvorg_channels.py <streams.json> <outdir>
+Emits: <outdir>/<site>.channels.xml (filtered) + prints per-site keep counts.
+"""
+
+import json
+import os
+import re
+import sys
+import time
+import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from matcher import SourceIndex, norm
+
+UA = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'}
+BASE = 'https://raw.githubusercontent.com/iptv-org/epg/master/sites/{dir}/{site}.channels.xml'
+
+# Validated grabbers (2026-08-15 audit). India sites are grabbed unfiltered
+# in the existing workflow step (full-lineup grabs there are cheap and the
+# coverage is broad); this list is the NON-India expansion.
+SITES = [
+    'tvpassport.com',      # US incl. no-callsign locals
+    'tv24.co.uk',          # UK
+    'tvireland.ie',        # IE
+    'programtv.onet.pl',   # PL
+    'www.magenta.tv',      # DE
+    'web.magentatv.de',    # DE
+    'tv.blue.ch',          # CH (DE/FR/IT)
+    'abc.net.au',          # AU
+    'foxtel.com.au',       # AU
+    'tvhebdo.com',         # CA
+    'programetv.ro',       # RO
+    'programacion-tv.elpais.com',  # ES
+    'movistarplus.es',     # ES
+    'programme-tv.net',    # FR
+    'tvcesoir.fr',         # FR
+    'meo.pt',              # PT
+    'guidatv.sky.it',      # IT
+    'cosmotetv.gr',        # GR
+    'cyta.com.cy',         # CY
+    'allente.se',          # SE
+    'epg.112114.xyz',      # IN (AIO mirror)
+    'gigatv.3bbtv.co.th',  # TH
+    'tvinsider.com',       # US
+    'dstv.com',            # ZA/Africa
+]
+
+# sites whose files live in a differently-named directory
+DIR_OVERRIDES = {
+    'www.magenta.tv': 'magenta.tv',
+    'web.magentatv.de': 'magentatv.de',
+    'programacion-tv.elpais.com': 'elpais.com',
+}
+
+
+def http_get(url, timeout=60, retries=2):
+    last = None
+    for _ in range(retries + 1):
+        try:
+            req = urllib.request.Request(url, headers=UA)
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read().decode('utf-8', errors='ignore')
+        except Exception as e:  # noqa: BLE001
+            last = e
+            time.sleep(1.5)
+    raise last
+
+
+def main():
+    streams_json = sys.argv[1]
+    outdir = sys.argv[2]
+    os.makedirs(outdir, exist_ok=True)
+
+    streams = json.load(open(streams_json))
+    idx = SourceIndex()
+    names = set()
+    for s in streams:
+        n = s.get('name', '')
+        if n:
+            idx.add(n, 'x')
+            names.add(norm(n))
+
+    for site in SITES:
+        d = DIR_OVERRIDES.get(site, site)
+        url = BASE.format(dir=d, site=site)
+        try:
+            txt = http_get(url)
+        except Exception as e:  # noqa: BLE001
+            print(f'[filter] {site}: download FAILED: {e}', file=sys.stderr)
+            continue
+        keep = []
+        total = 0
+        for m in re.finditer(r'<channel\s+([^>]*)>([^<]*)</channel>', txt):
+            total += 1
+            dn = m.group(2).strip()
+            nname = norm(dn)
+            if not nname:
+                continue
+            if nname in names or idx.fuzzy(dn, threshold=0.80, limit=1):
+                keep.append(m.group(0))
+        out = os.path.join(outdir, f'{site}.channels.xml')
+        with open(out, 'w', encoding='utf-8') as f:
+            f.write('<?xml version="1.0" encoding="UTF-8"?>\n<channels>\n')
+            for k in keep:
+                f.write(f'  {k}\n')
+            f.write('</channels>\n')
+        print(f'[filter] {site}: kept {len(keep)}/{total} channels')
+
+
+if __name__ == '__main__':
+    main()

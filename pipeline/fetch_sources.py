@@ -3,15 +3,22 @@
 
 Sources:
   - epg.pw global XMLTV (broad worldwide base)
-  - epgshare01 country files (rich US-locals + EU coverage; WebGrab+Plus based)
-  - (iptv-org India grab is run separately in the workflow via npm — it needs
+  - epgshare01 country files (rich US-locals + EU + MENA coverage; WebGrab+Plus)
+  - mitthu786/tvepg (India AIO)
+  - al7omed/bein-epg (beIN MENA, self-updating via GitHub Actions)
+  - (iptv-org grabs are run separately in the workflow via npm — they need
      the iptv-org/epg Node toolchain, not plain curl)
+
+globetvapp/epg was REMOVED 2026-08-15: all 248 upstream feeds went stale
+(programme data ends 2025-09..2025-12), including india2.
 
 Outputs to <outdir>/:
   - epgpw_global.xml.gz
   - es_<NAME>.xml.gz            (one per epgshare01 file)
+  - bein_mena.xml               (al7omed/bein-epg)
   - sources.json                manifest: [{source, file, kind}]
   - sources_index.json          {source: {norm_name: [channel_id, ...]}}
+  - call_signs.json             {source: {callsign: [channel_id, ...]}}
 
 Idempotent: skips files already present (non-empty). Set ESHARE_FILES to a
 comma list to download a subset (e.g. for local dev).
@@ -21,6 +28,7 @@ import gzip
 import json
 import os
 import re
+import ssl
 import sys
 import urllib.request
 from collections import defaultdict
@@ -34,11 +42,8 @@ EPG_PW_URL = 'https://epg.pw/xmltv/epg.xml.gz'
 ESHARE_BASE = 'https://epgshare01.online/epgshare01/epg_ripper_{}.xml.gz'
 # mitthu786/tvepg — India OTT EPG (JioTV/TataPlay/Zee5/SonyLIV/SunNXT), one AIO file
 TVEPG_URL = 'https://raw.githubusercontent.com/mitthu786/tvepg/main/epg.xml.gz'
-# globetvapp/epg — free country XMLTV on GitHub (country dir capitalized, file lowercase).
-# Only india2 has clean programme data (635/659 channels); india1/3/4/5 are
-# mostly orphaned programme refs or empty listings, so they're excluded.
-GLOBETV_BASE = 'https://raw.githubusercontent.com/globetvapp/epg/main/{}/{}'
-GLOBETV_FILES = {'india': [2]}  # country -> list of file indices
+# al7omed/bein-epg — beIN MENA sports, self-updating via GitHub Actions
+BEIN_URL = 'https://raw.githubusercontent.com/al7omed/bein-epg/main/docs/guide.xml'
 
 # Channel parsing (robust: icon/url may precede display-name).
 CHAN_BLOCK_RE = re.compile(r'<channel\s+id="(?P<id>[^"]*)"[^>]*>(?P<body>.*?)</channel>', re.S)
@@ -54,8 +59,11 @@ def call_sign(display_name):
     base = (display_name or '').split('-')[0].strip().upper()
     return base.lower() if CALLSIGN_RE.match(base) else None
 
+
 # Country files, ordered roughly by expected yield for this provider's lineup.
-# (US locals + national, UK/IE, CA, then EU, then the rest.)
+# 2026-08-15 additions (global source audit): AE1 (UAE/MENA hub — DX/RSL/MO
+# gaps), IN4, CH1, AT1, BE2, AL1 (SuperSport ZA), ASIANTELEVISION1 (ARY QTV/
+# ATN News), MT1, HU1, SK1. Removed PH1/PK1 (0 programmes, verified).
 ESHARE_FILES = [
     'US_LOCALS1', 'US2', 'US_SPORTS1',
     'UK1', 'IE1',
@@ -64,15 +72,39 @@ ESHARE_FILES = [
     'AU1', 'ZA1',
     'PH2', 'DK1', 'TR1', 'TR3', 'TH1',
     'SE1', 'NL1', 'NO1', 'FI1', 'CY1', 'NZ1', 'BR1', 'BR2', 'CZ1',
-    'IN1', 'IN2',
+    'IN1', 'IN2', 'IN4',
+    'AE1', 'AL1', 'CH1', 'AT1', 'BE2', 'ASIANTELEVISION1', 'MT1', 'HU1', 'SK1',
 ]
 
+# epgshare01 file -> additional ISO country codes it may serve (beyond its
+# own country). Files are matched against a stream's country via
+# build_mapping.COUNTRY_SOURCES; entries here keep MENA/regional files usable.
+EXTRA_COUNTRY_SOURCES = {
+    'AE1': ['AE', 'SA', 'QA', 'KW', 'OM', 'BH', 'JO', 'EG', 'MO'],  # pan-Arab hub
+    'AL1': ['AL', 'BA', 'HR', 'ME', 'MK', 'RS', 'SI', 'XK'],
+    'CH1': ['CH', 'DE', 'AT'],
+    'AT1': ['AT', 'DE'],
+    'BE2': ['BE', 'NL', 'LU'],
+    'ASIANTELEVISION1': ['UK', 'BD', 'IN', 'PK'],
+    'MT1': ['MT', 'IT'],
+    'HU1': ['HU', 'RO', 'SK', 'CZ'],
+    'SK1': ['SK', 'CZ'],
+    'AR1': ['AR', 'UY', 'PY', 'BO', 'EC', 'CO', 'CL', 'PE', 'VE'],
+    'SA2': ['SA'],
+    'BEIN1': ['QA', 'AE', 'SA', 'MO', 'EG'],
+}
 
-def download(url, dest, timeout=300):
+
+def download(url, dest, timeout=300, insecure=False):
     if os.path.exists(dest) and os.path.getsize(dest) > 0:
         return os.path.getsize(dest)
     req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    ctx = None
+    if insecure:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
         data = r.read()
     with open(dest, 'wb') as f:
         f.write(data)
@@ -150,19 +182,14 @@ def main():
     except Exception as e:  # noqa: BLE001
         print(f'[tvepg] FAILED: {e}', file=sys.stderr)
 
-    # globetvapp/epg country files
-    for country, indices in GLOBETV_FILES.items():
-        cdir = country.capitalize()
-        for i in indices:
-            dest = os.path.join(outdir, f'globetv_{country}{i}.xml.gz')
-            url = GLOBETV_BASE.format(cdir, f'{country}{i}.xml.gz')
-            try:
-                n = download(url, dest)
-                print(f'[globetv] {country}{i}: {n} bytes')
-                manifest.append({'source': f'globetv:{country}{i}',
-                                 'file': os.path.abspath(dest), 'kind': 'name'})
-            except Exception as e:  # noqa: BLE001
-                print(f'[globetv] {country}{i} FAILED: {e}', file=sys.stderr)
+    # al7omed/bein-epg — beIN MENA sports (39 channels, self-updating)
+    bein_path = os.path.join(outdir, 'bein_mena.xml')
+    try:
+        n = download(BEIN_URL, bein_path)
+        print(f'[bein] {n} bytes')
+        manifest.append({'source': 'bein', 'file': os.path.abspath(bein_path), 'kind': 'name'})
+    except Exception as e:  # noqa: BLE001
+        print(f'[bein] FAILED: {e}', file=sys.stderr)
 
     # iptv-org per-site grabs (io_jiotv.xml, io_tataplay.xml, ...) — indexed as
     # separate sources so numeric site_ids can't collide across sites.
@@ -172,6 +199,16 @@ def main():
             site = os.path.basename(f).replace('io_', '').replace('.xml', '')
             manifest.append({'source': f'iptv-org:{site}', 'file': os.path.abspath(f), 'kind': 'name'})
             print(f'[iptv-org] {site}: {os.path.getsize(f)} bytes')
+
+    # dedicated fetcher outputs, indexed under their own source names so
+    # build_mapping country-gates them correctly:
+    #   SKYHAWK_FILE=.../skyhawk.xml  DSTV_FILE=.../dstv.xml  EPGONE_FILE=...
+    for env, src in (('SKYHAWK_FILE', 'skyhawk'), ('DSTV_FILE', 'dstv'),
+                     ('EPGONE_FILE', 'epgone')):
+        f = os.environ.get(env, '').strip()
+        if f and os.path.exists(f):
+            manifest.append({'source': src, 'file': os.path.abspath(f), 'kind': 'name'})
+            print(f'[{src}] {os.path.getsize(f)} bytes')
 
     json.dump(manifest, open(os.path.join(outdir, 'sources.json'), 'w'), indent=1)
 

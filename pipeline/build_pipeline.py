@@ -90,10 +90,13 @@ def norm_time(t):
     return utc.strftime('%Y%m%d%H%M%S') + ' +0000'
 
 
-def parse_xmltv(path, needed_ids):
+def parse_xmltv(path, needed_ids, min_stop=None):
     """Parse one XMLTV file, keeping only channels/programmes in needed_ids.
 
     Returns (channels {id:(dn,icon)}, progs {id:[(start,stop,title,desc,cat)]}).
+    If min_stop is set (YYYYMMDD string), programmes whose stop is older are
+    dropped — the currency gate that prevents stale upstream feeds (like the
+    dead globetvapp) from polluting the guide.
     """
     data = read(path)
     channels = {}
@@ -106,18 +109,27 @@ def parse_xmltv(path, needed_ids):
         ic = ICON_RE.search(body)
         channels[cid] = (dn.group(1) if dn else cid, ic.group(1) if ic else '')
     progs = defaultdict(list)
+    n_stale = 0
     for m in PROG_RE.finditer(data):
         attrs = dict(ATTR_RE.findall(m.group(1)))
         ch = attrs.get('channel', '')
         if ch not in needed_ids:
             continue
+        st, sp = attrs.get('start', ''), attrs.get('stop', '')
+        if min_stop and sp:
+            # compare on the raw digits before any offset application
+            if sp[:8] < min_stop:
+                n_stale += 1
+                continue
         body = m.group(2)
         t = TITLE_RE.search(body)
         d = DESC_RE.search(body)
         c = CAT_RE.search(body)
-        progs[ch].append((attrs.get('start', ''), attrs.get('stop', ''),
+        progs[ch].append((st, sp,
                           t.group(1) if t else '', d.group(1) if d else '',
                           c.group(1) if c else ''))
+    if n_stale:
+        print(f'[currency] {os.path.basename(path)}: dropped {n_stale} stale programmes')
     return channels, progs
 
 
@@ -130,7 +142,12 @@ def main():
     ap.add_argument('--pk', help='PK scrapers JSON')
     ap.add_argument('--out', required=True)
     ap.add_argument('--coverage-out', default=None)
+    ap.add_argument('--min-stop', default=None,
+                    help='Currency gate: drop programmes whose stop date '
+                         '(YYYYMMDD) is older. Default: today UTC.')
     args = ap.parse_args()
+
+    min_stop = args.min_stop or dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d')
 
     streams = json.load(open(args.streams))
     mapping = json.load(open(args.mapping))
@@ -158,7 +175,7 @@ def main():
             print(f'[warn] no file for source {src}', file=sys.stderr)
             continue
         try:
-            ch, pr = parse_xmltv(path, ids)
+            ch, pr = parse_xmltv(path, ids, min_stop=min_stop)
             channels[src] = ch
             progs[src] = pr
             print(f'[layer] {src}: {len(ch)} channels, {sum(len(v) for v in pr.values())} programmes')
@@ -218,7 +235,33 @@ def main():
         out_progs[cid].extend(plist)
         used[src] += 1
 
-    # dedupe programmes by (start, channel) to avoid double entries on re-run
+    # Pre-pass: apply the currency gate + dedupe in memory, then drop channels
+    # left with zero programmes (an empty <channel> is dead weight).
+    final_progs = {}
+    seen = set()
+    stale_writes = 0
+    for cid, plist in out_progs.items():
+        keep = []
+        for (st, sp, ti, de, ca) in plist:
+            nst, nsp = norm_time(st), norm_time(sp)
+            if nsp and nsp[:8] < min_stop:
+                stale_writes += 1
+                continue
+            key = (nst, cid)
+            if key in seen:
+                continue
+            seen.add(key)
+            keep.append((nst, nsp, ti, de, ca))
+        if keep:
+            final_progs[cid] = keep
+    if stale_writes:
+        print(f'[currency] dropped {stale_writes} stale programmes at write time')
+    empty_ids = [cid for cid in out_chans if cid not in final_progs]
+    for cid in empty_ids:
+        del out_chans[cid]
+    if empty_ids:
+        print(f'[currency] dropped {len(empty_ids)} channels left with 0 programmes')
+
     total = 0
     with gzip.open(args.out, 'wt', encoding='utf-8') if args.out.endswith('.gz') \
             else open(args.out, 'w', encoding='utf-8') as f:
@@ -233,15 +276,10 @@ def main():
             if icon:
                 f.write(f'    <icon src={quoteattr(icon)}/>\n')
             f.write('  </channel>\n')
-        seen = set()
-        for cid, plist in out_progs.items():
-            for (st, sp, ti, de, ca) in plist:
-                key = (norm_time(st), cid)
-                if key in seen:
-                    continue
-                seen.add(key)
-                f.write(f'  <programme start={quoteattr(norm_time(st))} '
-                        f'stop={quoteattr(norm_time(sp))} channel={quoteattr(cid)}>\n')
+        for cid, plist in final_progs.items():
+            for (nst, nsp, ti, de, ca) in plist:
+                f.write(f'  <programme start={quoteattr(nst)} '
+                        f'stop={quoteattr(nsp)} channel={quoteattr(cid)}>\n')
                 f.write(f'    <title lang="en">{escape(ti)}</title>\n')
                 if de:
                     f.write(f'    <desc lang="en">{escape(de[:500])}</desc>\n')
@@ -254,7 +292,7 @@ def main():
     print(f'[done] channels: {len(out_chans)} | programmes: {total} | per-source: {dict(used)}')
 
     if args.coverage_out:
-        linear = [s for s in streams if not is_non_linear(s.get('cat_name', ''))]
+        linear = [s for s in streams if not is_non_linear(s.get('cat_name', ''), s.get('name', ''))]
         linear_names = {s['name'] for s in linear}
         cov = {
             'total_streams': len(streams),

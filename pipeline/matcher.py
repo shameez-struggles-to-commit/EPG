@@ -110,10 +110,38 @@ NON_LINEAR_KEYWORDS = (
     'adult',
 )
 
+# Channel-NAME patterns for event-only slots (2026-08-15 audit: these carry
+# match-day feeds only — no published schedule exists, so chasing EPG for
+# them is wasted effort). Matched against the channel name, not category.
+EVENT_NAME_RES = (
+    re.compile(r'^FA Cup \d+', re.I),
+    re.compile(r'^FA Player \d+', re.I),
+    re.compile(r'^National League \d+', re.I),
+    re.compile(r'^Sky Sports\+ Event', re.I),
+    re.compile(r'^Womens? Football', re.I),
+    re.compile(r'^HBO Max UK Event', re.I),
+    re.compile(r'^Solid Sport Event', re.I),
+    re.compile(r'^Cymru TV Event', re.I),
+    re.compile(r'^\u02e2 \u1d3e \u1d56 \u02e1', re.I),          # 'ˢ ᴾ ᶠ ᴸ' SPFL slots
+    re.compile(r'\(Event Only\)', re.I),
+    re.compile(r'^Magenta Sport \d+', re.I),
+    re.compile(r'^Primafila \d+', re.I),
+    re.compile(r'^Sky Store Premiere', re.I),
+    re.compile(r'^Stan AU \| Event', re.I),
+    re.compile(r'^Ligue 1 \d+', re.I),
+    re.compile(r'GAA|LOI( |$)|Tyrone Gaa|Ulster Gaa|NIFL', re.I),
+)
 
-def is_non_linear(category_name):
+
+def is_non_linear(category_name, channel_name=None):
     c = (category_name or '').lower()
-    return any(k in c for k in NON_LINEAR_KEYWORDS)
+    if any(k in c for k in NON_LINEAR_KEYWORDS):
+        return True
+    if channel_name:
+        for rx in EVENT_NAME_RES:
+            if rx.search(channel_name):
+                return True
+    return False
 
 
 class SourceIndex:

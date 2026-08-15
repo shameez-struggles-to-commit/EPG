@@ -16,7 +16,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -76,9 +76,39 @@ jobs:
           wait
           ls -la $GITHUB_WORKSPACE/data/io_*.xml
 
+      - name: Generate filtered channel lists (non-India iptv-org sites)
+        run: python3 pipeline/make_iptvorg_channels.py data/streams.json data/io_channels
+
+      - name: Run iptv-org grabber (validated non-India sites, filtered channels)
+        run: |
+          cd /tmp/iptv-org-epg
+          mkdir -p $GITHUB_WORKSPACE/data
+          # parallel batches of ~6; each uses the filtered channels file
+          for site in tvpassport.com tv24.co.uk tvireland.ie programtv.onet.pl www.magenta.tv web.magentatv.de tv.blue.ch abc.net.au foxtel.com.au tvhebdo.com programetv.ro programacion-tv.elpais.com movistarplus.es programme-tv.net tvcesoir.fr meo.pt guidatv.sky.it cosmotetv.gr cyta.com.cy allente.se epg.112114.xyz gigatv.3bbtv.co.th tvinsider.com dstv.com; do
+            CH="$GITHUB_WORKSPACE/data/io_channels/$site.channels.xml"
+            if [ -s "$CH" ]; then
+              npx tsx scripts/commands/epg/grab.ts --channels="$CH" --output="$GITHUB_WORKSPACE/data/io_${site}.xml" --days=2 --timeout=30000 --maxConnections=10 &
+            else
+              echo "skip $site (empty filter)"
+            fi
+            # throttle: wait every 6 jobs
+            if [ $(jobs -r | wc -l) -ge 6 ]; then wait -n; fi
+          done
+          wait
+          ls -la $GITHUB_WORKSPACE/data/io_*.xml | head -40
+
+      - name: Fetch Sky hawk / DStv / epg.one (custom fetchers)
+        run: |
+          python3 pipeline/fetch_skyhawk.py data/streams.json data/skyhawk.xml --days 2
+          python3 pipeline/fetch_dstv.py data/dstv.xml --days 2
+          python3 pipeline/fetch_epgone.py data/epgone_ua.xml
+
       - name: Download epg.pw + epgshare01 + index sources
         env:
-          IPTV_ORG_FILES: "data/io_jiotv.xml,data/io_tataplay.xml,data/io_dishtv.xml,data/io_airtel.xml,data/io_zee5.xml"
+          IPTV_ORG_FILES: "data/io_jiotv.xml,data/io_tataplay.xml,data/io_dishtv.xml,data/io_airtel.xml,data/io_zee5.xml,data/io_tvpassport.com.xml,data/io_tv24.co.uk.xml,data/io_tvireland.ie.xml,data/io_programtv.onet.pl.xml,data/io_www.magenta.tv.xml,data/io_web.magentatv.de.xml,data/io_tv.blue.ch.xml,data/io_abc.net.au.xml,data/io_foxtel.com.au.xml,data/io_tvhebdo.com.xml,data/io_programetv.ro.xml,data/io_programacion-tv.elpais.com.xml,data/io_movistarplus.es.xml,data/io_programme-tv.net.xml,data/io_tvcesoir.fr.xml,data/io_meo.pt.xml,data/io_guidatv.sky.it.xml,data/io_cosmotetv.gr.xml,data/io_cyta.com.cy.xml,data/io_allente.se.xml,data/io_epg.112114.xyz.xml,data/io_gigatv.3bbtv.co.th.xml,data/io_tvinsider.com.xml,data/io_dstv.com.xml"
+          SKYHAWK_FILE: "data/skyhawk.xml"
+          DSTV_FILE: "data/dstv.xml"
+          EPGONE_FILE: "data/epgone_ua.xml"
         run: python3 pipeline/fetch_sources.py ./data
 
       - name: Build mapping (fallback cascade + country gating + call signs)
@@ -189,7 +219,7 @@ jobs:
         run: |
           URL="https://${{ github.repository_owner }}.github.io/EPG/guide.xml.gz"
           STATUS=$(curl -sI -o /dev/null -w "%{http_code}" "$URL")
-          SIZE=$(curl -sI -o /dev/null -w "%{size_download}" "$URL")
+          SIZE=$(curl -s -o /dev/null -w "%{size_download}" "$URL")
           echo "Guide URL: $URL"
           echo "Status: $STATUS"
           echo "Size: $SIZE bytes"
@@ -202,7 +232,7 @@ jobs:
         run: |
           URL="https://${{ github.repository_owner }}.github.io/EPG/guide.xml.gz"
           STATUS=$(curl -sI -o /dev/null -w "%{http_code}" "$URL")
-          SIZE=$(curl -sI -o /dev/null -w "%{size_download}" "$URL")
+          SIZE=$(curl -s -o /dev/null -w "%{size_download}" "$URL")
           curl -s -H "Authorization: Bearer $NTFY_TOKEN" \
             -d "EPG Pipeline: guide.xml.gz HTTP $STATUS, ${SIZE} bytes — $(date -u)" \
             "$NTFY_URL/hermes-shameez-a7f9c2" || true
