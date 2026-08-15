@@ -257,6 +257,15 @@ def scrape_humtv_europe():
     return {'hum_tv_europe_pk': _scrape_humtv('https://hum.tv/schedule-europe/')}
 
 
+def scrape_humtv_world_sd():
+    """Hum World SD — same DOM as hum.tv/schedule (verified 2026-08-15)."""
+    return {'hum_tv_world_sd_pk': _scrape_humtv('https://hum.tv/schedule-world-sd/')}
+
+
+def scrape_humtv_world_hd():
+    return {'hum_tv_world_hd_pk': _scrape_humtv('https://hum.tv/schedule-world-hd/')}
+
+
 # ---------------------------------------------------------------- ARY Digital
 def scrape_arydigital():
     """arydigital.tv/schedule — panels id="mon".."sun", schedule-item blocks."""
@@ -301,6 +310,8 @@ SCRAPERS = {
     'geonews.tv': scrape_geonews,
     'hum.tv': scrape_humtv,
     'hum.tv/europe': scrape_humtv_europe,
+    'hum.tv/world-sd': scrape_humtv_world_sd,
+    'hum.tv/world-hd': scrape_humtv_world_hd,
     'arydigital.tv': scrape_arydigital,
     'expressentertainment.tv': scrape_express_entertainment,
 }

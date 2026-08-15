@@ -48,6 +48,7 @@ PK_OVERRIDES = {
     'Hum TV Europe': 'hum_tv_europe_pk',
     'ARY Digital Asia': 'ary_digital_pk',
     'Express Entertainment': 'express_entertainment_pk',
+    'ARY Zindagi': 'ary_zindagi_pk',   # headless scraper (JS-rendered site)
 }
 
 # Curated aliases: provider channel name -> source display-name that has live
