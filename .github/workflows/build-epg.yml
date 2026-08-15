@@ -14,6 +14,66 @@ permissions:
   id-token: write
 
 jobs:
+  onet-grab:
+    # programtv.onet.pl throttles ~1 req/s PER IP (verified: two concurrent
+    # same-runner processes finished together at ~12.6 min; single process was
+    # 13.8 min). Two matrix shards on different runner IPs halve the wall time.
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [a, b]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install iptv-org/epg
+        run: |
+          git clone --depth 1 https://github.com/iptv-org/epg.git /tmp/iptv-org-epg
+          cd /tmp/iptv-org-epg && npm install --no-audit --no-fund
+
+      - name: Fetch provider data (Xtream)
+        env:
+          IPTV_SERVER: ${{ secrets.IPTV_SERVER }}
+          IPTV_USER: ${{ secrets.IPTV_USER }}
+          IPTV_PASS: ${{ secrets.IPTV_PASS }}
+        run: python3 pipeline/fetch_provider.py ./data
+
+      - name: Generate filtered channel lists
+        run: python3 pipeline/make_iptvorg_channels.py data/streams.json data/io_channels
+
+      - name: Grab onet.pl shard
+        run: |
+          python3 - data/io_channels/programtv.onet.pl.channels.xml data/io_channels ${{ matrix.shard }} <<'PYEOF'
+          import re, sys
+          src, outdir, shard = sys.argv[1], sys.argv[2], sys.argv[3]
+          txt = open(src).read()
+          blocks = re.findall(r'<channel\s+[^>]*>.*?</channel>', txt, re.S)
+          half = (len(blocks) + 1) // 2
+          part = blocks[:half] if shard == 'a' else blocks[half:]
+          with open(f'{outdir}/programtv.onet.pl_{shard}.channels.xml', 'w') as f:
+              f.write('<?xml version="1.0" encoding="UTF-8"?>\n<channels>\n')
+              f.write('\n'.join(part) + '\n</channels>\n')
+          print(f'[split] shard {shard}: {len(part)} channels')
+          PYEOF
+          cd /tmp/iptv-org-epg
+          npx tsx scripts/commands/epg/grab.ts --channels="$GITHUB_WORKSPACE/data/io_channels/programtv.onet.pl_${{ matrix.shard }}.channels.xml" --output="$GITHUB_WORKSPACE/data/io_programtv.onet.pl_${{ matrix.shard }}.xml" --days=2 --timeout=30000 --maxConnections=10
+
+      - name: Upload onet shard artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: onet-${{ matrix.shard }}
+          path: data/io_programtv.onet.pl_${{ matrix.shard }}.xml
+          retention-days: 1
+
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -86,28 +146,16 @@ jobs:
           npm run grab --- --sites=zee5.com --maxConnections=4 --output=$WS/data/io_zee5.xml &
 
           # --- programtv.onet.pl: split the filtered list into 2 halves and grab
-          # concurrently. The upstream site config ships delay:5000 (throttles to
-          # ~1 req/s) so one process takes ~14 min; two processes halve that. ---
-          if [ -s "$WS/data/io_channels/programtv.onet.pl.channels.xml" ]; then
-            python3 - "$WS/data/io_channels/programtv.onet.pl.channels.xml" "$WS/data/io_channels" <<'PYEOF'
-          import re, sys
-          src, outdir = sys.argv[1], sys.argv[2]
-          txt = open(src).read()
-          blocks = re.findall(r'<channel\s+[^>]*>.*?</channel>', txt, re.S)
-          half = (len(blocks) + 1) // 2
-          for tag, part in (('a', blocks[:half]), ('b', blocks[half:])):
-              with open(f'{outdir}/programtv.onet.pl_{tag}.channels.xml', 'w') as f:
-                  f.write('<?xml version="1.0" encoding="UTF-8"?>\n<channels>\n')
-                  f.write('\n'.join(part) + '\n</channels>\n')
-          print(f'[split] programtv.onet.pl: {len(blocks[:half])}+{len(blocks[half:])} channels')
-          PYEOF
-            npx tsx scripts/commands/epg/grab.ts --channels="$WS/data/io_channels/programtv.onet.pl_a.channels.xml" --output="$WS/data/io_programtv.onet.pl_a.xml" --days=2 --timeout=30000 --maxConnections=10 &
-            npx tsx scripts/commands/epg/grab.ts --channels="$WS/data/io_channels/programtv.onet.pl_b.channels.xml" --output="$WS/data/io_programtv.onet.pl_b.xml" --days=2 --timeout=30000 --maxConnections=10 &
-          else
-            echo "skip programtv.onet.pl (empty filter)"
-          fi
+          # concurrently on SEPARATE RUNNERS (see the `onet-grab` matrix job) —
+          # the site throttles per IP (~1 req/s) so same-runner parallelism
+          # gains nothing; two runner IPs halve the wall time.
+          # (This step now only pre-splits for local/dev use; CI grabs happen
+          # in the matrix job and are downloaded below.)
 
           # --- remaining non-India sites (background, throttled) ---
+          # NOTE: programtv.onet.pl is NOT here — the site rate-limits per IP
+          # (~1 req/s regardless of parallelism), so it runs on 2 separate
+          # runners in the `onet-grab` matrix job instead.
           for site in tvpassport.com tv24.co.uk tvireland.ie www.magenta.tv web.magentatv.de tv.blue.ch abc.net.au foxtel.com.au tvhebdo.com programetv.ro programacion-tv.elpais.com movistarplus.es programme-tv.net tvcesoir.fr meo.pt guidatv.sky.it cosmotetv.gr cyta.com.cy allente.se epg.112114.xyz gigatv.3bbtv.co.th tvinsider.com; do
             CH="$WS/data/io_channels/$site.channels.xml"
             if [ -s "$CH" ]; then
@@ -132,10 +180,35 @@ jobs:
           python3 - "$WS/data" <<'PYEOF'
           import os, sys
           d = sys.argv[1]
-          expected = 'io_jiotv.xml io_tataplay.xml io_dishtv.xml io_airtel.xml io_zee5.xml io_programtv.onet.pl_a.xml io_programtv.onet.pl_b.xml io_tvpassport.com.xml io_tv24.co.uk.xml io_tvireland.ie.xml io_www.magenta.tv.xml io_web.magentatv.de.xml io_tv.blue.ch.xml io_abc.net.au.xml io_foxtel.com.au.xml io_tvhebdo.com.xml io_programetv.ro.xml io_programacion-tv.elpais.com.xml io_movistarplus.es.xml io_programme-tv.net.xml io_tvcesoir.fr.xml io_meo.pt.xml io_guidatv.sky.it.xml io_cosmotetv.gr.xml io_cyta.com.cy.xml io_allente.se.xml io_epg.112114.xyz.xml io_gigatv.3bbtv.co.th.xml io_tvinsider.com.xml'.split()
+          expected = 'io_jiotv.xml io_tataplay.xml io_dishtv.xml io_airtel.xml io_zee5.xml io_tvpassport.com.xml io_tv24.co.uk.xml io_tvireland.ie.xml io_www.magenta.tv.xml io_web.magentatv.de.xml io_tv.blue.ch.xml io_abc.net.au.xml io_foxtel.com.au.xml io_tvhebdo.com.xml io_programetv.ro.xml io_programacion-tv.elpais.com.xml io_movistarplus.es.xml io_programme-tv.net.xml io_tvcesoir.fr.xml io_meo.pt.xml io_guidatv.sky.it.xml io_cosmotetv.gr.xml io_cyta.com.cy.xml io_allente.se.xml io_epg.112114.xyz.xml io_gigatv.3bbtv.co.th.xml io_tvinsider.com.xml'.split()
           missing = [f for f in expected if not os.path.exists(os.path.join(d, f)) or os.path.getsize(os.path.join(d, f)) < 1024]
           print(f'WARN: {len(missing)} grab outputs missing/empty: {missing}' if missing else 'all grab outputs present')
           PYEOF
+
+      - name: Wait for onet.pl shards (grabbed on separate runner IPs)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # download-artifact does NOT wait for artifacts from concurrent jobs,
+          # so poll the run's artifact list until both onet shards exist.
+          for i in $(seq 1 80); do
+            names=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts" \
+              | python3 -c "import json,sys; print(' '.join(a['name'] for a in json.load(sys.stdin).get('artifacts',[])))" 2>/dev/null || echo "")
+            if echo " $names " | grep -q " onet-a " && echo " $names " | grep -q " onet-b "; then
+              echo "onet artifacts ready: $names"
+              break
+            fi
+            echo "waiting for onet shard artifacts ($i/80)..."
+            sleep 15
+          done
+
+      - name: Download onet.pl shards
+        uses: actions/download-artifact@v4
+        with:
+          pattern: onet-*
+          path: data
+          merge-multiple: true
 
       - name: Download epg.pw + epgshare01 + index sources
         env:
