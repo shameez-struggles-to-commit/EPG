@@ -34,7 +34,6 @@ SITES = [
     'tvpassport.com',      # US incl. no-callsign locals
     'tv24.co.uk',          # UK
     'tvireland.ie',        # IE
-    'programtv.onet.pl',   # PL
     'www.magenta.tv',      # DE
     'web.magentatv.de',    # DE
     'tv.blue.ch',          # CH (DE/FR/IT)

@@ -145,7 +145,6 @@ IPTV_ORG_COUNTRIES = {
     'tvpassport.com': {'US', 'CA', 'MX'},
     'tv24.co.uk': {'UK', 'IE'},
     'tvireland.ie': {'IE', 'UK'},
-    'programtv.onet.pl': {'PL'},
     'www.magenta.tv': {'DE'}, 'web.magentatv.de': {'DE'},
     'tv.blue.ch': {'CH', 'DE', 'FR', 'IT', 'AT'},
     'abc.net.au': {'AU'}, 'foxtel.com.au': {'AU'},
