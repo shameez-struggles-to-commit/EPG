@@ -41,6 +41,7 @@ PK_OVERRIDES = {
     'Har Pal Geo': 'geo_entertainment_pk',
     'Geo TV': 'geo_entertainment_pk',
     'Geo Kahani': 'geo_kahani_pk',
+    'Geo News': 'geo_news_pk',
     'Hum TV Europe': 'hum_tv_europe_pk',
     'ARY Digital Asia': 'ary_digital_pk',
     'Express Entertainment': 'express_entertainment_pk',

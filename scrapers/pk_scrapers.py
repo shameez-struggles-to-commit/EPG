@@ -13,10 +13,11 @@ Times are converted to UTC datetimes (source tz: Asia/Karachi).
 import re
 import html as HTML
 import datetime as dt
-import zoneinfo
-import urllib.request
 import json
+import os
 import sys
+import urllib.request
+import zoneinfo
 
 KHI = zoneinfo.ZoneInfo('Asia/Karachi')
 UA = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'}
@@ -133,6 +134,38 @@ def scrape_geokahani():
                 end += dt.timedelta(days=1)
             progs.append((title, start, end))
     return {'geo_kahani_pk': progs}
+
+
+def scrape_geonews():
+    """geo.tv/schedule (Geo News) — day blocks <div class="month" data-month="Month DD, YYYY">,
+    entries: <span class="timeslot">HH:MM</span> + <span class="schudule_status">Title</span>
+    (note the site's typo 'schudule_status')."""
+    h = fetch('https://www.geo.tv/schedule')
+    progs = []
+    parts = re.split(r'<div class="month" data-month="([^"]+)"', h)
+    for k in range(1, len(parts) - 1, 2):
+        date_str = parts[k].strip()
+        content = parts[k + 1]
+        try:
+            date = dt.datetime.strptime(date_str, '%B %d, %Y').date()
+        except ValueError:
+            continue
+        entries = re.findall(
+            r'<span class="timeslot">(\d{1,2}:\d{2})</span>.*?<span class="schudule_status">([^<]+)</span>',
+            content, re.S)
+        for i, (hhmm, title) in enumerate(entries):
+            title = title.strip()
+            if not title:
+                continue
+            start = to_utc(date.isoformat(), hhmm)
+            if i + 1 < len(entries):
+                end = to_utc(date.isoformat(), entries[i + 1][0])
+            else:
+                end = start + dt.timedelta(hours=1)
+            if end <= start:
+                end += dt.timedelta(days=1)
+            progs.append((title, start, end))
+    return {'geo_news_pk': progs}
 
 
 def scrape_express_entertainment():
@@ -265,6 +298,7 @@ def scrape_arydigital():
 SCRAPERS = {
     'harpalgeo.tv': scrape_harpalgeo,
     'geokahani.tv': scrape_geokahani,
+    'geonews.tv': scrape_geonews,
     'hum.tv': scrape_humtv,
     'hum.tv/europe': scrape_humtv_europe,
     'arydigital.tv': scrape_arydigital,
@@ -274,17 +308,30 @@ SCRAPERS = {
 
 def main():
     out = {}
+    status = {}  # name -> {'count': int, 'ok': bool, 'error': str|None}
+    out_path = sys.argv[1] if len(sys.argv) > 1 else '/tmp/pk_epg.json'
     for name, fn in SCRAPERS.items():
         try:
             res = fn()
             for ch, progs in res.items():
                 out[ch] = [{'title': t, 'start': s.isoformat(), 'stop': e.isoformat()} for t, s, e in progs]
+            total = sum(len(p) for p in res.values())
+            status[name] = {'count': total, 'ok': total > 0, 'error': None}
             print(f'[ok] {name}: ' + ', '.join(f'{c}={len(p)}' for c, p in res.items()), file=sys.stderr)
-        except Exception as ex:
+        except Exception as ex:  # noqa: BLE001
+            status[name] = {'count': 0, 'ok': False, 'error': str(ex)}
             print(f'[FAIL] {name}: {ex}', file=sys.stderr)
-    json.dump(out, open(sys.argv[1] if len(sys.argv) > 1 else '/tmp/pk_epg.json', 'w'), indent=1)
+    json.dump(out, open(out_path, 'w'), indent=1)
+    # machine-readable status for the no-LLM watchdog (same dir as the epg file)
+    status_path = os.path.join(os.path.dirname(os.path.abspath(out_path)), 'pk_status.json')
+    json.dump(status, open(status_path, 'w'), indent=1)
+    n_fail = sum(1 for s in status.values() if not s['ok'])
     print(json.dumps({c: len(p) for c, p in out.items()}))
+    print(f'[status] {len(status) - n_fail}/{len(status)} scrapers OK', file=sys.stderr)
+    if n_fail:
+        print(f'[status] FAILED: ' + ', '.join(k for k, s in status.items() if not s['ok']), file=sys.stderr)
+    return n_fail
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
