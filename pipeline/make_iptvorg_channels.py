@@ -54,7 +54,6 @@ SITES = [
     'epg.112114.xyz',      # IN (AIO mirror)
     'gigatv.3bbtv.co.th',  # TH
     'tvinsider.com',       # US
-    'dstv.com',            # ZA/Africa
 ]
 
 # sites that ship REGION-SUFFIXED channels files instead of <site>.channels.xml.
@@ -62,7 +61,6 @@ SITES = [
 REGION_FILES = {
     'abc.net.au': [],            # merge all abc.net.au_* files (AU regional)
     'allente.se': ['_se'],
-    'dstv.com': ['_za'],         # South Africa only (matches our ZA gap)
 }
 
 

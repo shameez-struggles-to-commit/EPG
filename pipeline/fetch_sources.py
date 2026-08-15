@@ -196,12 +196,24 @@ def main():
 
     # iptv-org per-site grabs (io_jiotv.xml, io_tataplay.xml, ...) — indexed as
     # separate sources so numeric site_ids can't collide across sites.
+    # Entries may override the source name: "name=path" (used when one site's
+    # grab is split across several files, e.g. programtv.onet.pl_a/_b — all
+    # files merge under one source name).
     for f in os.environ.get('IPTV_ORG_FILES', '').split(','):
         f = f.strip()
-        if f and os.path.exists(f):
+        if not f:
+            continue
+        src = None
+        if '=' in f:
+            src, f = f.split('=', 1)
+            src = src.strip()
+        if not os.path.exists(f):
+            continue
+        if src is None:
             site = os.path.basename(f).replace('io_', '').replace('.xml', '')
-            manifest.append({'source': f'iptv-org:{site}', 'file': os.path.abspath(f), 'kind': 'name'})
-            print(f'[iptv-org] {site}: {os.path.getsize(f)} bytes')
+            src = f'iptv-org:{site}'
+        manifest.append({'source': src, 'file': os.path.abspath(f), 'kind': 'name'})
+        print(f'[iptv-org] {src}: {os.path.getsize(f)} bytes ({os.path.basename(f)})')
 
     # dedicated fetcher outputs, indexed under their own source names so
     # build_mapping country-gates them correctly:
@@ -215,16 +227,25 @@ def main():
 
     json.dump(manifest, open(os.path.join(outdir, 'sources.json'), 'w'), indent=1)
 
-    # name index (display-name -> channel id) per source
+    # name index (display-name -> channel id) per source. Multiple manifest
+    # entries may share one source name (split grabs) — their indexes MERGE.
     index = {}
     callsigns = {}
     for m in manifest:
         if m['kind'] == 'name':
             try:
                 idx = build_index(m['file'])
-                index[m['source']] = {k: v for k, v in idx.by_name.items()}
+                if m['source'] in index:
+                    for k, v in idx.by_name.items():
+                        index[m['source']].setdefault(k, []).extend(v)
+                else:
+                    index[m['source']] = {k: list(v) for k, v in idx.by_name.items()}
                 cs = build_callsign_index(m['file'])
-                callsigns[m['source']] = {k: v for k, v in cs.items()}
+                if m['source'] in callsigns:
+                    for k, v in cs.items():
+                        callsigns[m['source']].setdefault(k, []).extend(v)
+                else:
+                    callsigns[m['source']] = {k: list(v) for k, v in cs.items()}
                 print(f'[index] {m["source"]}: {len(idx)} channels, {len(cs)} call signs')
             except Exception as e:  # noqa: BLE001
                 print(f'[index] {m["source"]} FAILED: {e}', file=sys.stderr)

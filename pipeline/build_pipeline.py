@@ -154,10 +154,13 @@ def main():
     pk = json.load(open(args.pk)) if args.pk and os.path.exists(args.pk) else {}
     manifest = json.load(open(args.sources))
 
-    # source label -> file path
-    src_files = {m['source']: m['file'] for m in manifest}
+    # source label -> list of file paths (a source may span several files
+    # when a grab was split, e.g. programtv.onet.pl_a/_b — they merge here)
+    src_files = defaultdict(list)
+    for m in manifest:
+        src_files[m['source']].append(m['file'])
     if args.provider:
-        src_files['provider'] = args.provider
+        src_files['provider'] = [args.provider]
 
     # collect candidate ids per source
     need = defaultdict(set)
@@ -170,15 +173,20 @@ def main():
     for src, ids in need.items():
         if src == 'pk':
             continue
-        path = src_files.get(src)
-        if not path:
+        paths = src_files.get(src)
+        if not paths:
             print(f'[warn] no file for source {src}', file=sys.stderr)
             continue
         try:
-            ch, pr = parse_xmltv(path, ids, min_stop=min_stop)
-            channels[src] = ch
-            progs[src] = pr
-            print(f'[layer] {src}: {len(ch)} channels, {sum(len(v) for v in pr.values())} programmes')
+            ch_all, pr_all = {}, defaultdict(list)
+            for path in paths:
+                ch, pr = parse_xmltv(path, ids, min_stop=min_stop)
+                ch_all.update(ch)
+                for k, v in pr.items():
+                    pr_all[k].extend(v)
+            channels[src] = ch_all
+            progs[src] = pr_all
+            print(f'[layer] {src}: {len(ch_all)} channels, {sum(len(v) for v in pr_all.values())} programmes')
         except Exception as e:  # noqa: BLE001
             print(f'[layer] {src} FAILED: {e}', file=sys.stderr)
 

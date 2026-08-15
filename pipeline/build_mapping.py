@@ -33,7 +33,7 @@ import sys
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from matcher import SourceIndex, norm, is_non_linear
+from matcher import SourceIndex, norm, is_non_linear, cyr_to_lat
 
 TIER = {
     'pk': 0, 'iptv-org': 1, 'skyhawk': 2, 'dstv': 2, 'epgone': 2,
@@ -71,6 +71,13 @@ NAME_ALIASES = {
     'MTV Beats': 'MTV',              # tvepg 'mtv' if live; harmless if not
     'Food Food': 'Foodxp',           # rebranded; foodxp has live data
     'Khabrain Abhi Tak': 'News 18 India',
+    # Greece (2026-08-16): Latin provider names vs Greek-script source names.
+    # Keys in norm() form so "ERT 1" / "ERT 1 HD" / "ERT 2 HD" etc. all hit.
+    # 'HD' normalizes away on both sides, so 'ΕΡΤ1 HD' keys as 'ερτ1'.
+    'ert 1': 'ΕΡΤ1 HD',
+    'ert 2': 'ΕΡΤ2 HD',
+    'ert 3': 'ΕΡΤ3 HD',
+    'ert news': 'ΕΡΤ NEWS',
 }
 
 JUNK_EPG_RE = re.compile(
@@ -153,7 +160,6 @@ IPTV_ORG_COUNTRIES = {
     'allente.se': {'SE'},
     'gigatv.3bbtv.co.th': {'TH'},
     'tvinsider.com': {'US', 'CA'},
-    'dstv.com': {'ZA', 'KE', 'NG', 'GH', 'UG', 'TZ', 'MZ', 'ZW', 'ZM'},
 }
 
 
@@ -229,18 +235,152 @@ def rebuild_index(name_to_ids):
     return idx
 
 
+def epg_q(name):
+    """Query transform for the epg.one source: transliterate Cyrillic and dedupe
+    repeated tokens. Provider names like "5 Kanal (5 канал)" normalize to
+    "5 kanal 5 kanal"; dedupe collapses that to "5 kanal" so it can hit the
+    fetcher's transliterated display-name. Harmless for pure-Latin names."""
+    toks = cyr_to_lat(norm(name)).split()
+    return ' '.join(dict.fromkeys(toks))
+
+
+# ---- US affiliate resolver (2026-08-16) ------------------------------------
+# Provider names US locals like "ABC: AL Birmingham ABC 33" (network + state +
+# city + brand, NO call sign). The pipeline/us_affiliates.json table (built by
+# build_us_affiliates.py from Wikipedia per-network affiliate lists) maps
+# "net|state|market" -> call signs; we then look the call sign up in the
+# epgshare01 US_LOCALS1 index like a normal call-sign match.
+
+US_AFF_STATE_CODES = ('AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD '
+                      'MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC '
+                      'SD TN TX UT VT VA WA WV WI WY DC').split()
+US_AFF_STATE_NAMES = {
+    'alabama': 'AL', 'alaska': 'AK', 'arizona': 'AZ', 'arkansas': 'AR',
+    'california': 'CA', 'colorado': 'CO', 'connecticut': 'CT', 'delaware': 'DE',
+    'florida': 'FL', 'georgia': 'GA', 'hawaii': 'HI', 'idaho': 'ID',
+    'illinois': 'IL', 'indiana': 'IN', 'iowa': 'IA', 'kansas': 'KS',
+    'kentucky': 'KY', 'louisiana': 'LA', 'maine': 'ME', 'maryland': 'MD',
+    'massachusetts': 'MA', 'michigan': 'MI', 'minnesota': 'MN',
+    'mississippi': 'MS', 'missouri': 'MO', 'montana': 'MT', 'nebraska': 'NE',
+    'nevada': 'NV', 'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM',
+    'new york': 'NY', 'north carolina': 'NC', 'north dakota': 'ND', 'ohio': 'OH',
+    'oklahoma': 'OK', 'oregon': 'OR', 'pennsylvania': 'PA', 'rhode island': 'RI',
+    'south carolina': 'SC', 'south dakota': 'SD', 'tennessee': 'TN',
+    'texas': 'TX', 'utah': 'UT', 'vermont': 'VT', 'virginia': 'VA',
+    'washington': 'WA', 'west virginia': 'WV', 'wisconsin': 'WI', 'wyoming': 'WY',
+}
+US_AFF_NETS = 'ABC CBS NBC FOX CW'
+US_AFF_STATE_CODE_ALT = '(' + '|'.join(US_AFF_STATE_CODES) + ')'
+US_AFF_STATE_NAME_ALT = '(' + '|'.join(sorted(US_AFF_STATE_NAMES, key=len, reverse=True)) + ')'
+US_AFF_BRAND_RE = re.compile(
+    r'\s+(?:(?:ABC|CBS|NBC|FOX|CW)\s*\d+|\d+\s*(?:ABC|CBS|NBC|FOX|CW)'
+    r'|(?:ABC|CBS|NBC|FOX|CW))\s*$', re.I)
+US_AFF_CALL_RE = re.compile(r'\s+[KW][A-Z]{2,3}\s*$')
+
+
+class AffiliateIndex:
+    """net|state|market -> [callsign, ...] with fallbacks."""
+
+    def __init__(self, table_path):
+        self.by_key = {}
+        self.by_city = {}
+        if table_path and os.path.exists(table_path):
+            data = json.load(open(table_path))
+            self.by_key = {k: v for k, v in data.get('affiliates', {}).items()}
+            self.single = data.get('state_single', {})
+            for k in self.by_key:
+                self.by_city.setdefault(k.split('|')[2], set()).add(k)
+
+    def lookup(self, net, st, city):
+        """Return (key, [callsigns]) or (key, None)."""
+        key = f'{net}|{st}|{city}'
+        css = self.by_key.get(key)
+        if css is None and len(self.single.get(f'{net}|{st}', [])) == 1:
+            css = self.single[f'{net}|{st}']
+        if css is None:
+            # market-contains fallback ("Raleigh" -> "Raleigh–Durham")
+            prefix = f'{net}|{st}|'
+            cands = [k for k in self.by_key
+                     if k.startswith(prefix) and city in k.split('|')[2]]
+            if len(cands) == 1:
+                css = self.by_key[cands[0]]
+                key = cands[0]
+        if css is None:
+            # nationally-unique city for this network ("Los Angeles" w/o state)
+            cands = sorted(k for k in self.by_city.get(city, set())
+                           if k.startswith(net + '|'))
+            if len(cands) == 1:
+                css = self.by_key[cands[0]]
+                key = cands[0]
+        return key, css
+
+
+def resolve_affiliate(name, aff_idx):
+    """Resolve "ABC: AL Birmingham ABC 33" -> (callsign list or None)."""
+    if not aff_idx:
+        return None
+    # pipe format: "NBC: WY | Cheyenne | KCHY"
+    if '|' in name:
+        parts = [p.strip() for p in name.split('|')]
+        m = re.match(r'^(ABC|CBS|NBC|FOX|CW)\s*:\s*' + US_AFF_STATE_CODE_ALT + r'$',
+                     parts[0], re.I)
+        if m and len(parts) >= 2:
+            net, st = m.group(1).lower(), m.group(2).upper()
+            city = re.sub(r'\s+', ' ', parts[1]).lower().strip()
+            if city:
+                _, css = aff_idx.lookup(net, st, city)
+                return css
+        return None
+    m = re.match(r'^(ABC|CBS|NBC|FOX|CW)\s*:\s*' + US_AFF_STATE_CODE_ALT +
+                 r'\s+(.+)$', name, re.I)
+    if m:
+        net, st, rest = m.group(1).lower(), m.group(2).upper(), m.group(3).strip()
+        rest = US_AFF_BRAND_RE.sub('', rest).strip()
+        rest = US_AFF_CALL_RE.sub('', rest).strip()
+        city = re.sub(r'\s+', ' ', rest).lower().strip()
+        if city:
+            _, css = aff_idx.lookup(net, st, city)
+            return css
+    # spelled-out state: "ABC: Fairbanks ABC Alaska" / "ABC: Columbia Falls Montana"
+    m2 = re.match(r'^(ABC|CBS|NBC|FOX|CW)\s*:\s*(.+)$', name, re.I)
+    if m2:
+        net, rest = m2.group(1).lower(), m2.group(2).strip()
+        m3 = re.match(r'^(.*?)\s+' + US_AFF_STATE_NAME_ALT + r'$', rest, re.I)
+        if m3:
+            city_raw, stname = m3.group(1).strip(), m3.group(2).lower()
+            st = US_AFF_STATE_NAMES.get(stname)
+            if st:
+                city = US_AFF_BRAND_RE.sub('', city_raw).strip()
+                city = re.sub(r'\s+', ' ', city).lower().strip()
+                if city:
+                    _, css = aff_idx.lookup(net, st, city)
+                    return css
+        # no state anywhere: national-unique city ("ABC: Los Angeles ABC 7")
+        rest = US_AFF_BRAND_RE.sub('', rest).strip()
+        city = re.sub(r'\s+', ' ', rest).lower().strip()
+        if city:
+            cands = sorted(k for k in aff_idx.by_city.get(city, set())
+                           if k.startswith(net + '|'))
+            if len(cands) == 1:
+                return aff_idx.by_key[cands[0]]
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--streams', required=True)
     ap.add_argument('--sources-index', required=True)
     ap.add_argument('--provider-index', default=None)
     ap.add_argument('--callsigns', default=None, help='fetch_sources call_signs.json')
+    ap.add_argument('--us-affiliates', default=None,
+                    help='pipeline/us_affiliates.json (Wikipedia affiliate table)')
     ap.add_argument('--fuzzy-threshold', type=float, default=0.85)
     ap.add_argument('-o', '--out', required=True)
     args = ap.parse_args()
 
     streams = json.load(open(args.streams))
     sources_index = json.load(open(args.sources_index))
+    aff_idx = AffiliateIndex(args.us_affiliates) if args.us_affiliates else None
 
     # US call-sign index (call sign -> [(source, id)]) for US-local matching
     cs_index = defaultdict(list)
@@ -294,18 +434,24 @@ def main():
 
         # 1b. curated alias (naming-convention bridge; append a candidate from
         # EVERY source that has the aliased name — the cascade then picks the
-        # first one with live programmes)
-        alias = NAME_ALIASES.get(name)
+        # first one with live programmes). Keys may be raw names or norm() form
+        # (norm keys cover all quality/pipe variants of one channel). Diaspora
+        # sources participate here too (e.g. PK "Food Food" -> "Foodxp" on
+        # tvepg/IN4) — same fallback as the exact loop.
+        alias = NAME_ALIASES.get(name) or NAME_ALIASES.get(norm(name))
         if alias:
             for src in name_sources:
                 if src.startswith('epgshare01') and src not in allowed_eshare:
-                    continue
+                    if not diaspora_allowed(src, cc):
+                        continue
                 if src in FETCHER_COUNTRIES and cc and cc not in FETCHER_COUNTRIES[src]:
                     continue
                 if src.startswith('iptv-org') and not iptv_org_allowed(src, cc):
-                    continue
+                    if not diaspora_allowed(src, cc):
+                        continue
                 if src == 'tvepg' and cc and cc != 'IN':
-                    continue
+                    if not diaspora_allowed(src, cc):
+                        continue
                 eids = src_idx[src].exact(alias)
                 if eids:
                     cands.append((src_tier(src), src, eids[0], 'alias', 0.97))
@@ -317,6 +463,21 @@ def main():
             src, i = cs_index[cs][0]
             cands.append((TIER['epgshare01'], src, i, 'callsign', 0.98))
             stats['callsign'] += 1
+
+        # 1c2. US affiliate resolution: "ABC: AL Birmingham ABC 33" carries no
+        # call sign — resolve network+state+city -> call sign via the Wikipedia
+        # affiliate table, then hit the epgshare01 call-sign index. ONLY fires
+        # when the name has no extractable call sign (a name WITH one is either
+        # already matched above or untrusted for this path).
+        if cc in ('US', 'USA') and aff_idx and not cs:
+            aff_css = resolve_affiliate(name, aff_idx)
+            if aff_css:
+                for acs in aff_css:
+                    if acs in cs_index:
+                        src, i = cs_index[acs][0]
+                        cands.append((TIER['epgshare01'], src, i, 'affiliate', 0.98))
+                        stats['affiliate'] += 1
+                        break
 
         # 2. name-based sources, exact (country-gated for epgshare01 /
         #    dedicated fetchers / iptv-org / tvepg; diaspora-exact fallback)
@@ -332,7 +493,8 @@ def main():
             if src == 'tvepg' and cc and cc != 'IN':
                 if not diaspora_allowed(src, cc):
                     continue
-            eids = src_idx[src].exact(name)
+            qname = epg_q(name) if src == 'epgone' else name
+            eids = src_idx[src].exact(qname)
             if eids:
                 # classify: 'exact' if the source is allowed for this stream
                 # through its normal gating, else 'diaspora' (exact-match
@@ -372,7 +534,8 @@ def main():
                 continue
             if src == 'tvepg' and cc and cc != 'IN':
                 continue
-            for sc, cn, cid in src_idx[src].fuzzy(name, threshold=args.fuzzy_threshold, limit=2):
+            fq = epg_q(name) if src == 'epgone' else name
+            for sc, cn, cid in src_idx[src].fuzzy(fq, threshold=args.fuzzy_threshold, limit=2):
                 cands.append((50 + src_tier(src), src, cid, 'fuzzy', round(sc, 2)))
                 stats[f'{src}:fuzzy'] += 1
 

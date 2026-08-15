@@ -30,6 +30,23 @@ FILLER = {'the', 'tv', 'channel', 'network', 'and'}
 
 WORD_RE = re.compile(r'\w+', re.UNICODE)
 
+# Cyrillic → Latin transliteration (channel-name matching bridge, e.g. provider
+# "5 Kanal (5 канал)" vs source "5 Kanal" / "5 канал"). Letter-only: spaces and
+# punctuation pass through so tokenization survives. Russian/Ukrainian subsets.
+CYRILLIC_TO_LAT = {
+    'а': 'a', 'б': 'b', 'в': 'v', 'г': 'h', 'ґ': 'g', 'д': 'd', 'е': 'e',
+    'ё': 'e', 'є': 'ie', 'ж': 'zh', 'з': 'z', 'и': 'y', 'і': 'i', 'ї': 'i',
+    'й': 'i', 'к': 'k', 'л': 'l', 'м': 'm', 'н': 'n', 'о': 'o', 'п': 'p',
+    'р': 'r', 'с': 's', 'т': 't', 'у': 'u', 'ф': 'f', 'х': 'kh', 'ц': 'ts',
+    'ч': 'ch', 'ш': 'sh', 'щ': 'shch', 'ъ': '', 'ы': 'y', 'ь': '', 'э': 'e',
+    'ю': 'iu', 'я': 'ia',
+}
+
+
+def cyr_to_lat(s):
+    """Transliterate Cyrillic characters in s to Latin (others pass through)."""
+    return ''.join(CYRILLIC_TO_LAT.get(c, c) for c in (s or '').lower())
+
 # Dotted ISO-3166-alpha-2 country suffix on a display-name ("Aaj Tak HD.in",
 # "Colors HD.us"). globetvapp and similar aggregators append these; strip them
 # so the name normalizes cleanly. NOT applied to standalone regional words
@@ -113,23 +130,44 @@ NON_LINEAR_KEYWORDS = (
 # Channel-NAME patterns for event-only slots (2026-08-15 audit: these carry
 # match-day feeds only — no published schedule exists, so chasing EPG for
 # them is wasted effort). Matched against the channel name, not category.
+# NOTE (2026-08-16): many provider names use PIPE separators ("Cymru TV | Event
+# 1"), so every pattern allows optional "\s*\|?\s*" between words. Patterns
+# that end in \d are anchored/word-bounded so real channels survive
+# (e.g. "CINEMA 1 MD" is a covered Moldova channel, but "Cinema 1" is a
+# Romanian rental slot).
 EVENT_NAME_RES = (
     re.compile(r'^FA Cup \d+', re.I),
     re.compile(r'^FA Player \d+', re.I),
     re.compile(r'^National League \d+', re.I),
-    re.compile(r'^Sky Sports\+ Event', re.I),
+    re.compile(r'^Sky Sports\+\s*\|?\s*Event', re.I),
     re.compile(r'^Womens? Football', re.I),
-    re.compile(r'^HBO Max UK Event', re.I),
-    re.compile(r'^Solid Sport Event', re.I),
-    re.compile(r'^Cymru TV Event', re.I),
+    re.compile(r'^HBO Max UK\s*\|?\s*Event', re.I),
+    re.compile(r'^Solid Sport\s*\|?\s*Event', re.I),
+    re.compile(r'^Cymru TV\s*\|?\s*Event', re.I),
     re.compile(r'^\u02e2 \u1d3e \u1d56 \u02e1', re.I),          # 'ˢ ᴾ ᶠ ᴸ' SPFL slots
     re.compile(r'\(Event Only\)', re.I),
     re.compile(r'^Magenta Sport \d+', re.I),
     re.compile(r'^Primafila \d+', re.I),
     re.compile(r'^Sky Store Premiere', re.I),
-    re.compile(r'^Stan AU \| Event', re.I),
+    re.compile(r'^Stan AU\s*\|?\s*Event', re.I),
     re.compile(r'^Ligue 1 \d+', re.I),
     re.compile(r'GAA|LOI( |$)|Tyrone Gaa|Ulster Gaa|NIFL', re.I),
+    # 2026-08-16 additions (verified: none of these are in the deployed guide)
+    re.compile(r'^A La Carte \d+', re.I),      # FR rental slots
+    re.compile(r'^Alquiler \d+', re.I),        # ES rental slots
+    re.compile(r'^Amazon Prime \d+', re.I),    # AU event slots
+    re.compile(r'^Friendly \d+', re.I),        # UK friendly-match feeds
+    re.compile(r'^DL TV \d+', re.I),           # TH restream slots
+    re.compile(r'^OHL TV \d+', re.I),          # CA hockey event feeds
+    re.compile(r'^Cinema \d+$', re.I),         # RO rental slots ($: keeps "CINEMA 1 MD")
+    re.compile(r'^Germany Besondere \d+', re.I),
+    re.compile(r'Sky Sports Red Button', re.I),
+    re.compile(r'^Premier Greyhound', re.I),
+    re.compile(r'^MLS Soccer \d+', re.I),      # US league-pass match feeds
+    re.compile(r'^MiLB TV', re.I),             # US minor-league event feeds
+    re.compile(r'Paramount\+ Event', re.I),    # "US | Paramount+ Event NN"
+    re.compile(r'^Peacock ', re.I),            # Peacock vault/news/SNL feeds
+    re.compile(r'^MC \|', re.I),               # Music Choice audio loops
 )
 
 

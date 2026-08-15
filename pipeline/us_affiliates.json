@@ -1,0 +1,2938 @@
+{
+ "affiliates": {
+  "abc|AK|anchorage": [
+   "kyur"
+  ],
+  "abc|AK|fairbanks": [
+   "katn"
+  ],
+  "abc|AK|juneau": [
+   "kjud"
+  ],
+  "abc|AL|birmingham": [
+   "wbma"
+  ],
+  "abc|AL|dothan": [
+   "wdhn"
+  ],
+  "abc|AL|huntsville": [
+   "waay"
+  ],
+  "abc|AL|montgomery": [
+   "wncf"
+  ],
+  "abc|AR|fayetteville": [
+   "khog"
+  ],
+  "abc|AR|fort smith": [
+   "khbs"
+  ],
+  "abc|AR|jonesboro": [
+   "kait"
+  ],
+  "abc|AR|little rock": [
+   "katv"
+  ],
+  "abc|AZ|phoenix": [
+   "knxv"
+  ],
+  "abc|AZ|tucson": [
+   "kgun"
+  ],
+  "abc|CA|bakersfield": [
+   "kero"
+  ],
+  "abc|CA|chico\u2013redding": [
+   "krcr"
+  ],
+  "abc|CA|eureka": [
+   "kaef"
+  ],
+  "abc|CA|fresno": [
+   "kfsn"
+  ],
+  "abc|CA|los angeles": [
+   "kabc"
+  ],
+  "abc|CA|palm springs": [
+   "kesq"
+  ],
+  "abc|CA|sacramento": [
+   "kxtv"
+  ],
+  "abc|CA|san diego": [
+   "kgtv"
+  ],
+  "abc|CA|san francisco": [
+   "kgo"
+  ],
+  "abc|CA|san luis obispo": [
+   "keyt"
+  ],
+  "abc|CO|colorado springs": [
+   "krdo"
+  ],
+  "abc|CO|denver": [
+   "kmgh"
+  ],
+  "abc|CO|grand junction": [
+   "kjct"
+  ],
+  "abc|CT|hartford\u2013new haven": [
+   "wtnh"
+  ],
+  "abc|DC|washington": [
+   "wjla"
+  ],
+  "abc|FL|fort myers": [
+   "wzvn"
+  ],
+  "abc|FL|gainesville": [
+   "wcjb"
+  ],
+  "abc|FL|jacksonville": [
+   "wjxx"
+  ],
+  "abc|FL|miami\u2013fort lauderdale": [
+   "wdfl"
+  ],
+  "abc|FL|orlando": [
+   "wftv"
+  ],
+  "abc|FL|panama city": [
+   "wmbb"
+  ],
+  "abc|FL|pensacola": [
+   "wear"
+  ],
+  "abc|FL|sarasota": [
+   "wwsb"
+  ],
+  "abc|FL|tallahassee": [
+   "wtxl"
+  ],
+  "abc|FL|tampa": [
+   "wfts"
+  ],
+  "abc|FL|west palm beach": [
+   "wpbf"
+  ],
+  "abc|GA|atlanta": [
+   "wsb"
+  ],
+  "abc|GA|augusta": [
+   "wjbf"
+  ],
+  "abc|GA|columbus": [
+   "wtvm"
+  ],
+  "abc|GA|savannah": [
+   "wjcl"
+  ],
+  "abc|HI|hilo": [
+   "khvo"
+  ],
+  "abc|HI|honolulu": [
+   "kitv"
+  ],
+  "abc|HI|wailuku": [
+   "kmau"
+  ],
+  "abc|IA|cedar rapids": [
+   "kcrg"
+  ],
+  "abc|IA|davenport": [
+   "wqad"
+  ],
+  "abc|IA|des moines": [
+   "woi"
+  ],
+  "abc|IA|ottumwa": [
+   "ktvo"
+  ],
+  "abc|IA|sioux city": [
+   "kcau"
+  ],
+  "abc|ID|boise": [
+   "kivi"
+  ],
+  "abc|ID|idaho falls": [
+   "kifi"
+  ],
+  "abc|ID|twin falls": [
+   "ksaw"
+  ],
+  "abc|IL|champaign\u2013springfield": [
+   "wicd",
+   "wics"
+  ],
+  "abc|IL|chicago": [
+   "wls"
+  ],
+  "abc|IL|rockford": [
+   "wtvo"
+  ],
+  "abc|IN|evansville": [
+   "weht"
+  ],
+  "abc|IN|fort wayne": [
+   "wpta"
+  ],
+  "abc|IN|indianapolis": [
+   "wrtv"
+  ],
+  "abc|IN|lafayette": [
+   "wpby"
+  ],
+  "abc|IN|south bend": [
+   "wbnd"
+  ],
+  "abc|IN|terre haute": [
+   "wawv"
+  ],
+  "abc|KS|colby": [
+   "klby"
+  ],
+  "abc|KS|garden city": [
+   "kupk"
+  ],
+  "abc|KS|hays": [
+   "kgbd"
+  ],
+  "abc|KS|salina": [
+   "khds"
+  ],
+  "abc|KS|topeka": [
+   "ktka"
+  ],
+  "abc|KS|wichita": [
+   "kake"
+  ],
+  "abc|KY|bowling green": [
+   "wbko"
+  ],
+  "abc|KY|lexington": [
+   "wtvq"
+  ],
+  "abc|KY|louisville": [
+   "whas"
+  ],
+  "abc|KY|paducah": [
+   "wsil",
+   "kpob"
+  ],
+  "abc|LA|alexandria": [
+   "klax"
+  ],
+  "abc|LA|baton rouge": [
+   "wbrz"
+  ],
+  "abc|LA|lafayette": [
+   "katc"
+  ],
+  "abc|LA|new orleans": [
+   "wgno"
+  ],
+  "abc|LA|shreveport": [
+   "ktbs"
+  ],
+  "abc|MA|boston": [
+   "wcvb"
+  ],
+  "abc|MA|springfield": [
+   "wggb"
+  ],
+  "abc|MD|baltimore": [
+   "wmar"
+  ],
+  "abc|MD|salisbury": [
+   "wmdt"
+  ],
+  "abc|ME|bangor": [
+   "wvii"
+  ],
+  "abc|ME|portland": [
+   "wmtw"
+  ],
+  "abc|MI|battle creek": [
+   "wotv"
+  ],
+  "abc|MI|detroit": [
+   "wxyz"
+  ],
+  "abc|MI|flint": [
+   "wjrt"
+  ],
+  "abc|MI|grand rapids": [
+   "wzzm"
+  ],
+  "abc|MI|lansing": [
+   "wlaj"
+  ],
+  "abc|MI|marquette": [
+   "wbup",
+   "wjmn"
+  ],
+  "abc|MI|sault ste. marie": [
+   "wgtq",
+   "wtom"
+  ],
+  "abc|MI|traverse city": [
+   "wgtu"
+  ],
+  "abc|MN|alexandria": [
+   "ksax"
+  ],
+  "abc|MN|duluth": [
+   "wdio"
+  ],
+  "abc|MN|hibbing": [
+   "wirt"
+  ],
+  "abc|MN|minneapolis\u2013saint paul": [
+   "kstp"
+  ],
+  "abc|MN|redwood falls": [
+   "krwf"
+  ],
+  "abc|MN|rochester": [
+   "kaal"
+  ],
+  "abc|MO|jefferson city": [
+   "kmiz"
+  ],
+  "abc|MO|joplin": [
+   "kode"
+  ],
+  "abc|MO|kansas city": [
+   "kmbc"
+  ],
+  "abc|MO|springfield": [
+   "kspr"
+  ],
+  "abc|MO|st. joseph": [
+   "kqtv"
+  ],
+  "abc|MO|st. louis": [
+   "kdnl"
+  ],
+  "abc|MS|biloxi": [
+   "wlox"
+  ],
+  "abc|MS|greenwood": [
+   "wabg"
+  ],
+  "abc|MS|jackson": [
+   "wapt"
+  ],
+  "abc|MS|meridian": [
+   "wtok"
+  ],
+  "abc|MT|billings": [
+   "ksvi"
+  ],
+  "abc|MT|bozeman": [
+   "kwyb"
+  ],
+  "abc|MT|butte": [
+   "kwyb"
+  ],
+  "abc|MT|great falls": [
+   "kfbb"
+  ],
+  "abc|MT|helena": [
+   "khbb"
+  ],
+  "abc|MT|missoula": [
+   "ktmf"
+  ],
+  "abc|NC|asheville": [
+   "wlos"
+  ],
+  "abc|NC|charlotte": [
+   "wsoc"
+  ],
+  "abc|NC|greensboro": [
+   "wxlv"
+  ],
+  "abc|NC|greenville": [
+   "wcti"
+  ],
+  "abc|NC|raleigh\u2013durham": [
+   "wtvd"
+  ],
+  "abc|NC|wilmington": [
+   "wway"
+  ],
+  "abc|ND|bismarck": [
+   "kbmy"
+  ],
+  "abc|ND|fargo": [
+   "wday"
+  ],
+  "abc|ND|grand forks": [
+   "wdaz"
+  ],
+  "abc|ND|minot": [
+   "kmcy"
+  ],
+  "abc|NE|grand island": [
+   "khgi"
+  ],
+  "abc|NE|hayes center": [
+   "kwnb"
+  ],
+  "abc|NE|lincoln": [
+   "klkn"
+  ],
+  "abc|NE|north platte": [
+   "khgi"
+  ],
+  "abc|NE|omaha": [
+   "ketv"
+  ],
+  "abc|NH|manchester": [
+   "wmur"
+  ],
+  "abc|NM|albuquerque": [
+   "koat"
+  ],
+  "abc|NM|clovis": [
+   "kvih"
+  ],
+  "abc|NV|las vegas": [
+   "ktnv"
+  ],
+  "abc|NV|reno": [
+   "kolo"
+  ],
+  "abc|NY|albany": [
+   "wten"
+  ],
+  "abc|NY|binghamton": [
+   "wivt"
+  ],
+  "abc|NY|buffalo": [
+   "wkbw"
+  ],
+  "abc|NY|elmira": [
+   "weny"
+  ],
+  "abc|NY|new york city": [
+   "wabc"
+  ],
+  "abc|NY|rochester": [
+   "wham"
+  ],
+  "abc|NY|syracuse": [
+   "wsyr"
+  ],
+  "abc|NY|utica": [
+   "wutr"
+  ],
+  "abc|NY|watertown": [
+   "wwti"
+  ],
+  "abc|OH|cincinnati": [
+   "wcpo"
+  ],
+  "abc|OH|cleveland": [
+   "wews"
+  ],
+  "abc|OH|columbus": [
+   "wsyx"
+  ],
+  "abc|OH|dayton": [
+   "wkef"
+  ],
+  "abc|OH|lima": [
+   "wams",
+   "wohl",
+   "wpnm"
+  ],
+  "abc|OH|toledo": [
+   "wtvg"
+  ],
+  "abc|OH|youngstown": [
+   "wytv"
+  ],
+  "abc|OK|oklahoma city": [
+   "koco"
+  ],
+  "abc|OK|tulsa": [
+   "ktul"
+  ],
+  "abc|OR|bend": [
+   "kohd"
+  ],
+  "abc|OR|eugene": [
+   "kezi"
+  ],
+  "abc|OR|klamath falls": [
+   "kdkf"
+  ],
+  "abc|OR|medford": [
+   "kdrv"
+  ],
+  "abc|OR|portland": [
+   "katu"
+  ],
+  "abc|PA|erie": [
+   "wjet"
+  ],
+  "abc|PA|harrisburg": [
+   "whtm"
+  ],
+  "abc|PA|johnstown": [
+   "watm"
+  ],
+  "abc|PA|philadelphia": [
+   "wpvi"
+  ],
+  "abc|PA|pittsburgh": [
+   "wtae"
+  ],
+  "abc|PA|scranton": [
+   "wnep"
+  ],
+  "abc|PR|carolina": [
+   "wrfb"
+  ],
+  "abc|PR|mayag\u00fcez": [
+   "wora"
+  ],
+  "abc|SC|columbia": [
+   "wolo"
+  ],
+  "abc|SC|florence": [
+   "wpde"
+  ],
+  "abc|SD|lead": [
+   "khsd"
+  ],
+  "abc|SD|pierre": [
+   "kpry"
+  ],
+  "abc|SD|rapid city": [
+   "kota"
+  ],
+  "abc|SD|sioux falls": [
+   "ksfy"
+  ],
+  "abc|TN|chattanooga": [
+   "wtvc"
+  ],
+  "abc|TN|jackson": [
+   "wbbj"
+  ],
+  "abc|TN|knoxville": [
+   "wate"
+  ],
+  "abc|TN|memphis": [
+   "watn"
+  ],
+  "abc|TN|nashville": [
+   "wkrn"
+  ],
+  "abc|TX|abilene": [
+   "ktxs"
+  ],
+  "abc|TX|amarillo": [
+   "kvii"
+  ],
+  "abc|TX|austin": [
+   "kvue"
+  ],
+  "abc|TX|beaumont\u2013port arthur": [
+   "kbmt"
+  ],
+  "abc|TX|bryan": [
+   "krhd"
+  ],
+  "abc|TX|corpus christi": [
+   "kiii"
+  ],
+  "abc|TX|dallas\u2013fort worth": [
+   "wfaa"
+  ],
+  "abc|TX|el paso": [
+   "kvia"
+  ],
+  "abc|TX|harlingen": [
+   "krgv"
+  ],
+  "abc|TX|houston": [
+   "ktrk"
+  ],
+  "abc|TX|lubbock": [
+   "kamc"
+  ],
+  "abc|TX|midland\u2013odessa": [
+   "kmid"
+  ],
+  "abc|TX|san angelo": [
+   "ktxe"
+  ],
+  "abc|TX|san antonio": [
+   "ksat"
+  ],
+  "abc|TX|tyler": [
+   "kltv",
+   "ktre"
+  ],
+  "abc|TX|victoria": [
+   "kavu"
+  ],
+  "abc|TX|waco": [
+   "kxxv"
+  ],
+  "abc|TX|wichita falls": [
+   "kswo"
+  ],
+  "abc|UT|salt lake city": [
+   "ktvx"
+  ],
+  "abc|VA|charlottesville": [
+   "wvaw"
+  ],
+  "abc|VA|harrisonburg": [
+   "whsv"
+  ],
+  "abc|VA|norfolk": [
+   "wvec"
+  ],
+  "abc|VA|richmond": [
+   "wric"
+  ],
+  "abc|VA|roanoke": [
+   "wset"
+  ],
+  "abc|VT|burlington": [
+   "wvny"
+  ],
+  "abc|WA|kennewick": [
+   "kvew"
+  ],
+  "abc|WA|seattle": [
+   "komo"
+  ],
+  "abc|WA|spokane": [
+   "kxly"
+  ],
+  "abc|WA|yakima": [
+   "kapp"
+  ],
+  "abc|WI|eau claire": [
+   "wqow"
+  ],
+  "abc|WI|green bay": [
+   "wbay"
+  ],
+  "abc|WI|la crosse": [
+   "wxow"
+  ],
+  "abc|WI|madison": [
+   "wkow"
+  ],
+  "abc|WI|milwaukee": [
+   "wisn"
+  ],
+  "abc|WI|wausau": [
+   "waow"
+  ],
+  "abc|WV|bluefield": [
+   "woay"
+  ],
+  "abc|WV|huntington\u2013charleston": [
+   "wchs"
+  ],
+  "abc|WY|casper": [
+   "ktwo"
+  ],
+  "abc|WY|cheyenne": [
+   "kktq"
+  ],
+  "abc|WY|sheridan": [
+   "ksgw"
+  ],
+  "cbs|AK|anchorage": [
+   "kyes",
+   "ktuu"
+  ],
+  "cbs|AK|fairbanks": [
+   "kxdf"
+  ],
+  "cbs|AK|juneau": [
+   "kyex"
+  ],
+  "cbs|AK|sitka\u2013ketchikan": [
+   "kubd",
+   "ksct"
+  ],
+  "cbs|AL|dothan": [
+   "wtvy"
+  ],
+  "cbs|AL|huntsville": [
+   "whnt"
+  ],
+  "cbs|AL|mobile": [
+   "wkrg"
+  ],
+  "cbs|AL|montgomery": [
+   "waka"
+  ],
+  "cbs|AR|fort smith": [
+   "kfsm"
+  ],
+  "cbs|AR|little rock": [
+   "kthv"
+  ],
+  "cbs|AZ|phoenix": [
+   "kpho"
+  ],
+  "cbs|AZ|tucson": [
+   "kold"
+  ],
+  "cbs|AZ|yuma": [
+   "kyma"
+  ],
+  "cbs|CA|bakersfield": [
+   "kbak"
+  ],
+  "cbs|CA|chico\u2013redding": [
+   "khsl"
+  ],
+  "cbs|CA|eureka": [
+   "kviq"
+  ],
+  "cbs|CA|fresno": [
+   "kgpe"
+  ],
+  "cbs|CA|los angeles": [
+   "kcbs"
+  ],
+  "cbs|CA|monterey": [
+   "kion"
+  ],
+  "cbs|CA|palm springs": [
+   "kpsp"
+  ],
+  "cbs|CA|sacramento": [
+   "kovr"
+  ],
+  "cbs|CA|san diego": [
+   "kfmb"
+  ],
+  "cbs|CA|san francisco": [
+   "kpix"
+  ],
+  "cbs|CO|colorado springs": [
+   "kktv"
+  ],
+  "cbs|CO|denver": [
+   "kcnc"
+  ],
+  "cbs|CO|durango": [
+   "krez"
+  ],
+  "cbs|CO|grand junction": [
+   "krex"
+  ],
+  "cbs|CO|montrose": [
+   "krey"
+  ],
+  "cbs|CT|hartford\u2013new haven": [
+   "wfsb"
+  ],
+  "cbs|DC|washington": [
+   "wusa"
+  ],
+  "cbs|FL|fort myers": [
+   "wink"
+  ],
+  "cbs|FL|gainesville": [
+   "wgfl"
+  ],
+  "cbs|FL|jacksonville": [
+   "wjax"
+  ],
+  "cbs|FL|miami\u2013fort lauderdale": [
+   "wfor"
+  ],
+  "cbs|FL|orlando": [
+   "wkmg"
+  ],
+  "cbs|FL|panama city": [
+   "wecp"
+  ],
+  "cbs|FL|tallahassee": [
+   "wctv"
+  ],
+  "cbs|FL|tampa": [
+   "wtsp"
+  ],
+  "cbs|FL|west palm beach": [
+   "wpec"
+  ],
+  "cbs|GA|albany": [
+   "wswg"
+  ],
+  "cbs|GA|atlanta": [
+   "wupa"
+  ],
+  "cbs|GA|augusta": [
+   "wrdw"
+  ],
+  "cbs|GA|columbus": [
+   "wrbl"
+  ],
+  "cbs|GA|macon": [
+   "wmaz"
+  ],
+  "cbs|GA|savannah": [
+   "wtoc"
+  ],
+  "cbs|HI|honolulu": [
+   "kgmb"
+  ],
+  "cbs|IA|cedar rapids": [
+   "kgan"
+  ],
+  "cbs|IA|davenport": [
+   "whbf"
+  ],
+  "cbs|IA|des moines": [
+   "kcci"
+  ],
+  "cbs|ID|boise": [
+   "kboi"
+  ],
+  "cbs|ID|lewiston": [
+   "klew"
+  ],
+  "cbs|ID|twin falls": [
+   "kmvt"
+  ],
+  "cbs|IL|champaign\u2013springfield": [
+   "wcia"
+  ],
+  "cbs|IL|chicago": [
+   "wbbm"
+  ],
+  "cbs|IL|peoria": [
+   "wmbd"
+  ],
+  "cbs|IL|quincy": [
+   "khqa"
+  ],
+  "cbs|IL|rockford": [
+   "wifr"
+  ],
+  "cbs|IN|evansville": [
+   "wevv"
+  ],
+  "cbs|IN|fort wayne": [
+   "wane"
+  ],
+  "cbs|IN|indianapolis": [
+   "wttv",
+   "wttk"
+  ],
+  "cbs|IN|lafayette": [
+   "wlfi"
+  ],
+  "cbs|IN|south bend": [
+   "wsbt"
+  ],
+  "cbs|IN|terre haute": [
+   "wthi"
+  ],
+  "cbs|KS|garden city": [
+   "kbsd"
+  ],
+  "cbs|KS|goodland": [
+   "kbsl"
+  ],
+  "cbs|KS|hays": [
+   "kbsh"
+  ],
+  "cbs|KS|topeka": [
+   "wibw"
+  ],
+  "cbs|KS|wichita": [
+   "kwch"
+  ],
+  "cbs|KY|hazard": [
+   "wymt"
+  ],
+  "cbs|KY|lexington": [
+   "wkyt"
+  ],
+  "cbs|KY|louisville": [
+   "wlky"
+  ],
+  "cbs|KY|paducah": [
+   "kfvs"
+  ],
+  "cbs|LA|baton rouge": [
+   "wafb"
+  ],
+  "cbs|LA|lafayette": [
+   "klfy"
+  ],
+  "cbs|LA|lake charles": [
+   "kswl"
+  ],
+  "cbs|LA|monroe": [
+   "knoe"
+  ],
+  "cbs|LA|new orleans": [
+   "wwl"
+  ],
+  "cbs|LA|shreveport": [
+   "ksla"
+  ],
+  "cbs|MA|boston": [
+   "wbz"
+  ],
+  "cbs|MA|springfield": [
+   "wshm"
+  ],
+  "cbs|MD|baltimore": [
+   "wjz"
+  ],
+  "cbs|MD|salisbury": [
+   "wboc"
+  ],
+  "cbs|ME|bangor": [
+   "wabi"
+  ],
+  "cbs|ME|portland": [
+   "wgme"
+  ],
+  "cbs|ME|presque isle": [
+   "wagm"
+  ],
+  "cbs|MI|alpena": [
+   "wbkb"
+  ],
+  "cbs|MI|detroit": [
+   "wwj"
+  ],
+  "cbs|MI|flint": [
+   "wnem"
+  ],
+  "cbs|MI|grand rapids": [
+   "wwmt"
+  ],
+  "cbs|MI|lansing": [
+   "wlns"
+  ],
+  "cbs|MI|sault ste. marie": [
+   "wwup"
+  ],
+  "cbs|MI|traverse city": [
+   "wwtv"
+  ],
+  "cbs|MN|mankato": [
+   "keyc"
+  ],
+  "cbs|MN|minneapolis\u2013saint paul": [
+   "wcco"
+  ],
+  "cbs|MN|rochester": [
+   "kimt"
+  ],
+  "cbs|MN|walker": [
+   "kccw"
+  ],
+  "cbs|MO|jefferson city": [
+   "krcg"
+  ],
+  "cbs|MO|joplin": [
+   "koam"
+  ],
+  "cbs|MO|kansas city": [
+   "kctv"
+  ],
+  "cbs|MO|springfield": [
+   "kolr"
+  ],
+  "cbs|MO|st. joseph": [
+   "kcjo"
+  ],
+  "cbs|MO|st. louis": [
+   "kmov"
+  ],
+  "cbs|MS|greenwood": [
+   "wxvt"
+  ],
+  "cbs|MS|hattiesburg": [
+   "whlt"
+  ],
+  "cbs|MS|meridian": [
+   "wmdn"
+  ],
+  "cbs|MS|tupelo": [
+   "wcbi"
+  ],
+  "cbs|MT|billings": [
+   "ktvq"
+  ],
+  "cbs|MT|bozeman": [
+   "kbzk"
+  ],
+  "cbs|MT|butte": [
+   "kxlf"
+  ],
+  "cbs|MT|great falls": [
+   "krtv"
+  ],
+  "cbs|MT|helena": [
+   "kxlh"
+  ],
+  "cbs|MT|kalispell": [
+   "kajj"
+  ],
+  "cbs|MT|missoula": [
+   "kpax"
+  ],
+  "cbs|NC|charlotte": [
+   "wbtv"
+  ],
+  "cbs|NC|greensboro": [
+   "wfmy"
+  ],
+  "cbs|NC|greenville": [
+   "wnct"
+  ],
+  "cbs|NC|raleigh\u2013durham": [
+   "wncn"
+  ],
+  "cbs|ND|fargo": [
+   "kxjb"
+  ],
+  "cbs|ND|williston": [
+   "kxmd"
+  ],
+  "cbs|NE|grand island": [
+   "kgin"
+  ],
+  "cbs|NE|lincoln": [
+   "koln"
+  ],
+  "cbs|NE|north platte": [
+   "knpl"
+  ],
+  "cbs|NE|omaha": [
+   "kmtv"
+  ],
+  "cbs|NE|scottsbluff": [
+   "kstf"
+  ],
+  "cbs|NM|roswell": [
+   "kbim"
+  ],
+  "cbs|NV|las vegas": [
+   "klas"
+  ],
+  "cbs|NV|reno": [
+   "ktvn"
+  ],
+  "cbs|NY|albany": [
+   "wrgb"
+  ],
+  "cbs|NY|binghamton": [
+   "wbng"
+  ],
+  "cbs|NY|buffalo": [
+   "wivb"
+  ],
+  "cbs|NY|new york city": [
+   "wcbs"
+  ],
+  "cbs|NY|rochester": [
+   "wroc"
+  ],
+  "cbs|NY|syracuse": [
+   "wkof"
+  ],
+  "cbs|NY|watertown": [
+   "wwny"
+  ],
+  "cbs|OH|cincinnati": [
+   "wkrc"
+  ],
+  "cbs|OH|cleveland": [
+   "woio"
+  ],
+  "cbs|OH|columbus": [
+   "wbns"
+  ],
+  "cbs|OH|dayton": [
+   "whio"
+  ],
+  "cbs|OH|toledo": [
+   "wtol"
+  ],
+  "cbs|OH|youngstown": [
+   "wkbn"
+  ],
+  "cbs|OK|oklahoma city": [
+   "kwtv"
+  ],
+  "cbs|OK|tulsa": [
+   "kotv"
+  ],
+  "cbs|OR|bend": [
+   "kbnz"
+  ],
+  "cbs|OR|coos bay": [
+   "kcby"
+  ],
+  "cbs|OR|eugene": [
+   "kval"
+  ],
+  "cbs|OR|medford": [
+   "ktvl"
+  ],
+  "cbs|OR|portland": [
+   "koin"
+  ],
+  "cbs|OR|roseburg": [
+   "kpic"
+  ],
+  "cbs|PA|erie": [
+   "wsee"
+  ],
+  "cbs|PA|harrisburg": [
+   "whp"
+  ],
+  "cbs|PA|johnstown": [
+   "wtaj"
+  ],
+  "cbs|PA|philadelphia": [
+   "kyw"
+  ],
+  "cbs|PA|pittsburgh": [
+   "kdka"
+  ],
+  "cbs|PA|scranton": [
+   "wyou"
+  ],
+  "cbs|RI|providence": [
+   "wpri"
+  ],
+  "cbs|SC|charleston": [
+   "wcsc"
+  ],
+  "cbs|SC|columbia": [
+   "wltx"
+  ],
+  "cbs|SC|florence": [
+   "wbtw"
+  ],
+  "cbs|SD|florence": [
+   "kdlo"
+  ],
+  "cbs|SD|pierre": [
+   "kplo"
+  ],
+  "cbs|SD|sioux falls": [
+   "kelo"
+  ],
+  "cbs|TN|chattanooga": [
+   "wdef"
+  ],
+  "cbs|TN|johnson city": [
+   "wjhl"
+  ],
+  "cbs|TN|knoxville": [
+   "wvlt"
+  ],
+  "cbs|TN|memphis": [
+   "wreg"
+  ],
+  "cbs|TN|nashville": [
+   "wtvf"
+  ],
+  "cbs|TX|abilene": [
+   "ktab"
+  ],
+  "cbs|TX|amarillo": [
+   "kfda"
+  ],
+  "cbs|TX|austin": [
+   "keye"
+  ],
+  "cbs|TX|beaumont\u2013port arthur": [
+   "kfdm"
+  ],
+  "cbs|TX|bryan": [
+   "kbtx"
+  ],
+  "cbs|TX|corpus christi": [
+   "kztv"
+  ],
+  "cbs|TX|dallas\u2013fort worth": [
+   "ktvt"
+  ],
+  "cbs|TX|el paso": [
+   "kdbc"
+  ],
+  "cbs|TX|houston": [
+   "khou"
+  ],
+  "cbs|TX|laredo": [
+   "kylx"
+  ],
+  "cbs|TX|lubbock": [
+   "klbk"
+  ],
+  "cbs|TX|midland\u2013odessa": [
+   "kosa"
+  ],
+  "cbs|TX|san angelo": [
+   "klst"
+  ],
+  "cbs|TX|san antonio": [
+   "kens"
+  ],
+  "cbs|TX|sherman": [
+   "kxii"
+  ],
+  "cbs|TX|tyler": [
+   "kytx"
+  ],
+  "cbs|TX|victoria": [
+   "kxts"
+  ],
+  "cbs|TX|waco": [
+   "kwtx"
+  ],
+  "cbs|TX|wichita falls": [
+   "kauz"
+  ],
+  "cbs|UT|salt lake city": [
+   "kutv"
+  ],
+  "cbs|VA|charlottesville": [
+   "wcav"
+  ],
+  "cbs|VA|norfolk": [
+   "wtkr"
+  ],
+  "cbs|VA|richmond": [
+   "wtvr"
+  ],
+  "cbs|VA|roanoke": [
+   "wdbj"
+  ],
+  "cbs|VT|burlington": [
+   "wcax"
+  ],
+  "cbs|WA|kennewick": [
+   "kepr"
+  ],
+  "cbs|WA|seattle": [
+   "kiro"
+  ],
+  "cbs|WA|spokane": [
+   "krem"
+  ],
+  "cbs|WA|yakima": [
+   "kima"
+  ],
+  "cbs|WI|eau claire": [
+   "wkbt"
+  ],
+  "cbs|WI|green bay": [
+   "wfrv"
+  ],
+  "cbs|WI|madison": [
+   "wisc"
+  ],
+  "cbs|WI|milwaukee": [
+   "wdjt"
+  ],
+  "cbs|WI|wausau": [
+   "wsaw"
+  ],
+  "cbs|WV|bluefield": [
+   "wvns"
+  ],
+  "cbs|WV|clarksburg": [
+   "wdtv"
+  ],
+  "cbs|WV|huntington\u2013charleston": [
+   "wowk"
+  ],
+  "cbs|WV|parkersburg": [
+   "wiye"
+  ],
+  "cbs|WV|wheeling": [
+   "wtrf"
+  ],
+  "cbs|WY|casper": [
+   "kgwc"
+  ],
+  "cbs|WY|cheyenne": [
+   "kgwn"
+  ],
+  "cbs|WY|lander": [
+   "kgwl"
+  ],
+  "cbs|WY|rock springs": [
+   "kgwr"
+  ],
+  "cw|AL|birmingham": [
+   "wdbb",
+   "wtto"
+  ],
+  "cw|AL|huntsville": [
+   "whdf"
+  ],
+  "cw|AL|mobile": [
+   "wfna"
+  ],
+  "cw|AL|montgomery": [
+   "wbmm"
+  ],
+  "cw|AR|little rock": [
+   "kasn"
+  ],
+  "cw|AZ|phoenix": [
+   "kazt",
+   "kazt"
+  ],
+  "cw|AZ|tucson": [
+   "kttu"
+  ],
+  "cw|CA|eureka": [
+   "keca"
+  ],
+  "cw|CA|fresno": [
+   "kfre"
+  ],
+  "cw|CA|los angeles": [
+   "ktla"
+  ],
+  "cw|CA|monterey": [
+   "kcba"
+  ],
+  "cw|CA|palm springs": [
+   "kcwq"
+  ],
+  "cw|CA|sacramento": [
+   "kqca"
+  ],
+  "cw|CA|san diego": [
+   "kusi"
+  ],
+  "cw|CA|san francisco": [
+   "kron"
+  ],
+  "cw|CO|colorado springs": [
+   "kxtu"
+  ],
+  "cw|CO|denver": [
+   "kwgn"
+  ],
+  "cw|CT|hartford\u2013new haven": [
+   "wcct"
+  ],
+  "cw|DC|washington": [
+   "wdcw"
+  ],
+  "cw|FL|fort myers": [
+   "wxcw"
+  ],
+  "cw|FL|jacksonville": [
+   "wcwj"
+  ],
+  "cw|FL|miami\u2013fort lauderdale": [
+   "wbfs"
+  ],
+  "cw|FL|orlando": [
+   "wkcf"
+  ],
+  "cw|FL|tallahassee": [
+   "wtlf"
+  ],
+  "cw|FL|tampa": [
+   "wtta"
+  ],
+  "cw|FL|west palm beach": [
+   "wtvx"
+  ],
+  "cw|GA|albany": [
+   "wgcw"
+  ],
+  "cw|GA|atlanta": [
+   "wpch"
+  ],
+  "cw|IA|davenport": [
+   "kgcw"
+  ],
+  "cw|IA|des moines": [
+   "kcwi"
+  ],
+  "cw|ID|boise": [
+   "kyuu"
+  ],
+  "cw|IL|champaign\u2013springfield": [
+   "wbui"
+  ],
+  "cw|IL|chicago": [
+   "wgn"
+  ],
+  "cw|IL|rockford": [
+   "wsln"
+  ],
+  "cw|IN|evansville": [
+   "wtvw"
+  ],
+  "cw|IN|fort wayne": [
+   "wise"
+  ],
+  "cw|IN|indianapolis": [
+   "wish"
+  ],
+  "cw|IN|south bend": [
+   "wcww"
+  ],
+  "cw|KS|wichita": [
+   "kscw"
+  ],
+  "cw|KY|louisville": [
+   "wbki"
+  ],
+  "cw|LA|alexandria": [
+   "klgc"
+  ],
+  "cw|LA|baton rouge": [
+   "wbrl"
+  ],
+  "cw|LA|new orleans": [
+   "wnol"
+  ],
+  "cw|LA|shreveport": [
+   "kpxj"
+  ],
+  "cw|MA|boston": [
+   "wlvi"
+  ],
+  "cw|MD|baltimore": [
+   "wnuv"
+  ],
+  "cw|ME|portland": [
+   "wpxt"
+  ],
+  "cw|MI|detroit": [
+   "wkbd"
+  ],
+  "cw|MI|flint": [
+   "wbsf"
+  ],
+  "cw|MI|marquette": [
+   "wbkp"
+  ],
+  "cw|MN|duluth": [
+   "kdlh"
+  ],
+  "cw|MN|minneapolis\u2013saint paul": [
+   "wucw"
+  ],
+  "cw|MO|kansas city": [
+   "kcwe"
+  ],
+  "cw|MO|springfield": [
+   "kycw"
+  ],
+  "cw|MO|st. louis": [
+   "kplr"
+  ],
+  "cw|MS|jackson": [
+   "wjtv"
+  ],
+  "cw|MS|tupelo": [
+   "wlov"
+  ],
+  "cw|NC|charlotte": [
+   "wmyt"
+  ],
+  "cw|NC|greensboro": [
+   "wcwg"
+  ],
+  "cw|NC|raleigh\u2013durham": [
+   "wlfl"
+  ],
+  "cw|ND|bismarck": [
+   "kxmb"
+  ],
+  "cw|ND|dickinson": [
+   "kxma"
+  ],
+  "cw|ND|minot": [
+   "kxmc"
+  ],
+  "cw|ND|williston": [
+   "kxmd"
+  ],
+  "cw|NE|grand island": [
+   "knhl"
+  ],
+  "cw|NE|lincoln": [
+   "kcwh"
+  ],
+  "cw|NM|albuquerque": [
+   "kwbq"
+  ],
+  "cw|NM|roswell": [
+   "krwb"
+  ],
+  "cw|NV|las vegas": [
+   "kvcw"
+  ],
+  "cw|NY|albany": [
+   "wcwn"
+  ],
+  "cw|NY|buffalo": [
+   "wnlo"
+  ],
+  "cw|NY|new york city": [
+   "wpix"
+  ],
+  "cw|OH|cleveland": [
+   "wbnx"
+  ],
+  "cw|OH|columbus": [
+   "wwho"
+  ],
+  "cw|OH|dayton": [
+   "wbdt"
+  ],
+  "cw|OK|oklahoma city": [
+   "kaut"
+  ],
+  "cw|OK|tulsa": [
+   "kqcw"
+  ],
+  "cw|OR|portland": [
+   "krcw"
+  ],
+  "cw|PA|philadelphia": [
+   "wphl"
+  ],
+  "cw|PA|pittsburgh": [
+   "wpnt"
+  ],
+  "cw|PA|scranton": [
+   "wswb"
+  ],
+  "cw|SC|spartanburg": [
+   "wspa"
+  ],
+  "cw|SD|rapid city": [
+   "kclo"
+  ],
+  "cw|TN|chattanooga": [
+   "wfli"
+  ],
+  "cw|TN|knoxville": [
+   "wbxx"
+  ],
+  "cw|TN|memphis": [
+   "wlmt"
+  ],
+  "cw|TX|austin": [
+   "knva"
+  ],
+  "cw|TX|dallas\u2013fort worth": [
+   "kdaf"
+  ],
+  "cw|TX|harlingen": [
+   "kcwt"
+  ],
+  "cw|TX|houston": [
+   "kiah"
+  ],
+  "cw|TX|lubbock": [
+   "klcw"
+  ],
+  "cw|TX|midland\u2013odessa": [
+   "kcwo"
+  ],
+  "cw|TX|waco": [
+   "knct"
+  ],
+  "cw|UT|salt lake city": [
+   "kucw"
+  ],
+  "cw|VA|richmond": [
+   "wupv"
+  ],
+  "cw|VA|roanoke": [
+   "wwcw"
+  ],
+  "cw|VT|burlington": [
+   "wnne"
+  ],
+  "cw|WA|seattle": [
+   "kuns"
+  ],
+  "cw|WA|spokane": [
+   "kskn"
+  ],
+  "cw|WI|eau claire": [
+   "wecx",
+   "weau"
+  ],
+  "cw|WI|green bay": [
+   "wcwf"
+  ],
+  "cw|WI|milwaukee": [
+   "wvtv"
+  ],
+  "cw|WI|wausau": [
+   "wyow"
+  ],
+  "cw|WV|huntington\u2013charleston": [
+   "wqcw"
+  ],
+  "fox|AK|anchorage": [
+   "ktby"
+  ],
+  "fox|AL|birmingham": [
+   "wbrc"
+  ],
+  "fox|AL|dothan": [
+   "wdfx"
+  ],
+  "fox|AL|huntsville": [
+   "wzdx"
+  ],
+  "fox|AL|mobile": [
+   "wala"
+  ],
+  "fox|AL|montgomery": [
+   "wcov"
+  ],
+  "fox|AZ|phoenix": [
+   "ksaz"
+  ],
+  "fox|AZ|tucson": [
+   "kmsb"
+  ],
+  "fox|AZ|yuma": [
+   "kecy"
+  ],
+  "fox|CA|bakersfield": [
+   "kbfx"
+  ],
+  "fox|CA|fresno": [
+   "kmph"
+  ],
+  "fox|CA|los angeles": [
+   "kttv"
+  ],
+  "fox|CA|palm springs": [
+   "kdfx"
+  ],
+  "fox|CA|sacramento": [
+   "ktxl"
+  ],
+  "fox|CA|san diego": [
+   "kswb"
+  ],
+  "fox|CA|san francisco": [
+   "ktvu"
+  ],
+  "fox|CA|san luis obispo": [
+   "kkfx"
+  ],
+  "fox|CO|colorado springs": [
+   "kxrm"
+  ],
+  "fox|CO|denver": [
+   "kdvr"
+  ],
+  "fox|CO|fort collins": [
+   "kfct"
+  ],
+  "fox|CO|grand junction": [
+   "kfqx"
+  ],
+  "fox|CT|hartford\u2013new haven": [
+   "wtic"
+  ],
+  "fox|DC|washington": [
+   "wttg"
+  ],
+  "fox|FL|fort myers": [
+   "wftx"
+  ],
+  "fox|FL|gainesville": [
+   "wogx"
+  ],
+  "fox|FL|jacksonville": [
+   "wfox"
+  ],
+  "fox|FL|miami\u2013fort lauderdale": [
+   "wsvn"
+  ],
+  "fox|FL|orlando": [
+   "wofl"
+  ],
+  "fox|FL|panama city": [
+   "wpgx"
+  ],
+  "fox|FL|tampa": [
+   "wtvt"
+  ],
+  "fox|FL|west palm beach": [
+   "wflx"
+  ],
+  "fox|GA|albany": [
+   "wfxl"
+  ],
+  "fox|GA|atlanta": [
+   "waga"
+  ],
+  "fox|GA|augusta": [
+   "wfxg"
+  ],
+  "fox|GA|columbus": [
+   "wxtx"
+  ],
+  "fox|GA|macon": [
+   "wgxa"
+  ],
+  "fox|GA|savannah": [
+   "wtgs"
+  ],
+  "fox|HI|hilo": [
+   "khaw"
+  ],
+  "fox|HI|honolulu": [
+   "khon"
+  ],
+  "fox|HI|wailuku": [
+   "kaii"
+  ],
+  "fox|IA|davenport": [
+   "kljb"
+  ],
+  "fox|IA|des moines": [
+   "kdsm"
+  ],
+  "fox|IA|ottumwa": [
+   "kyou"
+  ],
+  "fox|IA|sioux city": [
+   "kpth"
+  ],
+  "fox|ID|boise": [
+   "knin"
+  ],
+  "fox|ID|twin falls": [
+   "ksvt"
+  ],
+  "fox|IL|champaign\u2013springfield": [
+   "wccu",
+   "wrsp"
+  ],
+  "fox|IL|chicago": [
+   "wfld"
+  ],
+  "fox|IL|peoria": [
+   "wyzz"
+  ],
+  "fox|IL|rockford": [
+   "wqrf"
+  ],
+  "fox|IN|fort wayne": [
+   "wfft"
+  ],
+  "fox|IN|indianapolis": [
+   "wxin"
+  ],
+  "fox|IN|lafayette": [
+   "wpbi"
+  ],
+  "fox|KS|garden city": [
+   "kaas",
+   "ksas"
+  ],
+  "fox|KS|hays": [
+   "kocw"
+  ],
+  "fox|KS|topeka": [
+   "ktmj"
+  ],
+  "fox|KS|wichita": [
+   "ksas"
+  ],
+  "fox|KY|lexington": [
+   "wdky"
+  ],
+  "fox|KY|louisville": [
+   "wdrb"
+  ],
+  "fox|KY|paducah": [
+   "kbsi"
+  ],
+  "fox|LA|alexandria": [
+   "wntz"
+  ],
+  "fox|LA|baton rouge": [
+   "wgmb"
+  ],
+  "fox|LA|lafayette": [
+   "kadn"
+  ],
+  "fox|LA|lake charles": [
+   "kvhp"
+  ],
+  "fox|LA|monroe": [
+   "kard"
+  ],
+  "fox|LA|new orleans": [
+   "wvue"
+  ],
+  "fox|LA|shreveport": [
+   "kmss"
+  ],
+  "fox|MA|boston": [
+   "wfxt"
+  ],
+  "fox|MD|baltimore": [
+   "wbff"
+  ],
+  "fox|ME|bangor": [
+   "wfvx"
+  ],
+  "fox|MI|detroit": [
+   "wjbk"
+  ],
+  "fox|MI|flint": [
+   "wsmh"
+  ],
+  "fox|MI|grand rapids": [
+   "wxmi"
+  ],
+  "fox|MI|lansing": [
+   "wsym"
+  ],
+  "fox|MI|sault ste. marie": [
+   "wfup"
+  ],
+  "fox|MI|traverse city": [
+   "wfqx"
+  ],
+  "fox|MN|bemidji": [
+   "kftc"
+  ],
+  "fox|MN|duluth": [
+   "kqds"
+  ],
+  "fox|MN|minneapolis\u2013saint paul": [
+   "kmsp"
+  ],
+  "fox|MN|rochester": [
+   "kxlt"
+  ],
+  "fox|MO|jefferson city": [
+   "kqfx"
+  ],
+  "fox|MO|joplin": [
+   "kfjx"
+  ],
+  "fox|MO|kansas city": [
+   "wdaf"
+  ],
+  "fox|MO|springfield": [
+   "krbk"
+  ],
+  "fox|MO|st. joseph": [
+   "knpn"
+  ],
+  "fox|MO|st. louis": [
+   "ktvi"
+  ],
+  "fox|MS|biloxi": [
+   "wxxv"
+  ],
+  "fox|MS|hattiesburg": [
+   "whpm"
+  ],
+  "fox|MS|jackson": [
+   "wdbd"
+  ],
+  "fox|MS|meridian": [
+   "wgbc"
+  ],
+  "fox|MT|billings": [
+   "khmt"
+  ],
+  "fox|MT|bozeman": [
+   "kwyb"
+  ],
+  "fox|NC|charlotte": [
+   "wjzy"
+  ],
+  "fox|NC|greensboro": [
+   "wghp"
+  ],
+  "fox|NC|raleigh\u2013durham": [
+   "wraz"
+  ],
+  "fox|NC|wilmington": [
+   "wsfx"
+  ],
+  "fox|ND|fargo": [
+   "kjrr",
+   "kvrr"
+  ],
+  "fox|ND|grand forks": [
+   "kbrr"
+  ],
+  "fox|ND|pembina": [
+   "knrr"
+  ],
+  "fox|NE|lincoln": [
+   "kfxl"
+  ],
+  "fox|NE|north platte": [
+   "kiit"
+  ],
+  "fox|NE|omaha": [
+   "kptm"
+  ],
+  "fox|NV|las vegas": [
+   "kvvu"
+  ],
+  "fox|NV|reno": [
+   "krxi"
+  ],
+  "fox|NY|albany": [
+   "wxxa"
+  ],
+  "fox|NY|binghamton": [
+   "wicz"
+  ],
+  "fox|NY|buffalo": [
+   "wutv"
+  ],
+  "fox|NY|elmira": [
+   "wydc"
+  ],
+  "fox|NY|new york city": [
+   "wnyw"
+  ],
+  "fox|NY|rochester": [
+   "wuhf"
+  ],
+  "fox|NY|syracuse": [
+   "wsyt"
+  ],
+  "fox|NY|utica": [
+   "wfxv"
+  ],
+  "fox|NY|watertown": [
+   "wnyf"
+  ],
+  "fox|OH|cincinnati": [
+   "wxix"
+  ],
+  "fox|OH|cleveland": [
+   "wjw"
+  ],
+  "fox|OH|toledo": [
+   "wupw"
+  ],
+  "fox|OH|youngstown": [
+   "wyfx"
+  ],
+  "fox|OK|oklahoma city": [
+   "kokh"
+  ],
+  "fox|OR|bend": [
+   "kfxo"
+  ],
+  "fox|OR|eugene": [
+   "klsr"
+  ],
+  "fox|OR|medford": [
+   "kmvu"
+  ],
+  "fox|OR|portland": [
+   "kptv"
+  ],
+  "fox|PA|erie": [
+   "wfxp"
+  ],
+  "fox|PA|harrisburg": [
+   "wpmt"
+  ],
+  "fox|PA|johnstown": [
+   "wwcp"
+  ],
+  "fox|PA|philadelphia": [
+   "wtxf"
+  ],
+  "fox|PA|pittsburgh": [
+   "wpgh"
+  ],
+  "fox|PA|scranton": [
+   "wolf"
+  ],
+  "fox|PR|aguadilla": [
+   "wsjp"
+  ],
+  "fox|RI|providence": [
+   "wnac"
+  ],
+  "fox|SC|charleston": [
+   "wtat"
+  ],
+  "fox|SC|columbia": [
+   "wach"
+  ],
+  "fox|SC|greenville": [
+   "whns"
+  ],
+  "fox|SC|myrtle beach": [
+   "wfxb"
+  ],
+  "fox|SD|rapid city": [
+   "kevn",
+   "kota"
+  ],
+  "fox|TN|jackson": [
+   "wjkt"
+  ],
+  "fox|TN|knoxville": [
+   "wtnz"
+  ],
+  "fox|TN|memphis": [
+   "whbq"
+  ],
+  "fox|TN|nashville": [
+   "wztv"
+  ],
+  "fox|TX|abilene": [
+   "kxva"
+  ],
+  "fox|TX|amarillo": [
+   "kcit"
+  ],
+  "fox|TX|austin": [
+   "ktbc"
+  ],
+  "fox|TX|corpus christi": [
+   "kscc"
+  ],
+  "fox|TX|dallas\u2013fort worth": [
+   "kdfw"
+  ],
+  "fox|TX|el paso": [
+   "kfox"
+  ],
+  "fox|TX|harlingen": [
+   "kfxv",
+   "kmbh",
+   "kxfx"
+  ],
+  "fox|TX|houston": [
+   "kriv"
+  ],
+  "fox|TX|laredo": [
+   "kxof"
+  ],
+  "fox|TX|lubbock": [
+   "kjtv"
+  ],
+  "fox|TX|midland\u2013odessa": [
+   "kpej"
+  ],
+  "fox|TX|san angelo": [
+   "kidy"
+  ],
+  "fox|TX|san antonio": [
+   "kabb"
+  ],
+  "fox|TX|tyler": [
+   "kfxk"
+  ],
+  "fox|TX|victoria": [
+   "kvct"
+  ],
+  "fox|TX|waco": [
+   "kwkt"
+  ],
+  "fox|TX|wichita falls": [
+   "kjtl"
+  ],
+  "fox|UT|salt lake city": [
+   "kstu"
+  ],
+  "fox|VA|harrisonburg": [
+   "wsvf"
+  ],
+  "fox|VA|norfolk": [
+   "wvbt"
+  ],
+  "fox|VA|richmond": [
+   "wrlh"
+  ],
+  "fox|VA|roanoke": [
+   "wfxr"
+  ],
+  "fox|VT|burlington": [
+   "wfff"
+  ],
+  "fox|WA|seattle": [
+   "kcpq"
+  ],
+  "fox|WA|spokane": [
+   "kayu"
+  ],
+  "fox|WI|eau claire": [
+   "weux",
+   "wlax"
+  ],
+  "fox|WI|green bay": [
+   "wluk"
+  ],
+  "fox|WI|madison": [
+   "wmsn"
+  ],
+  "fox|WI|milwaukee": [
+   "witi"
+  ],
+  "fox|WI|wausau": [
+   "wzaw"
+  ],
+  "fox|WV|clarksburg": [
+   "wvfx"
+  ],
+  "fox|WV|parkersburg": [
+   "wova"
+  ],
+  "fox|WY|casper": [
+   "kfnb"
+  ],
+  "fox|WY|cheyenne": [
+   "klwy"
+  ],
+  "fox|WY|rawlins": [
+   "kfnr"
+  ],
+  "fox|WY|shoshoni": [
+   "kfne"
+  ],
+  "nbc|AK|anchorage": [
+   "ktuu"
+  ],
+  "nbc|AK|fairbanks": [
+   "ktvf"
+  ],
+  "nbc|AK|juneau": [
+   "kath"
+  ],
+  "nbc|AK|sitka\u2013ketchikan": [
+   "ksct",
+   "kubd"
+  ],
+  "nbc|AL|birmingham": [
+   "wvtm"
+  ],
+  "nbc|AL|dothan": [
+   "wrgx"
+  ],
+  "nbc|AL|huntsville": [
+   "waff"
+  ],
+  "nbc|AL|montgomery": [
+   "wsfa"
+  ],
+  "nbc|AR|fayetteville": [
+   "knwa"
+  ],
+  "nbc|AR|little rock": [
+   "kark"
+  ],
+  "nbc|AZ|flagstaff": [
+   "knaz"
+  ],
+  "nbc|AZ|phoenix": [
+   "kpnx"
+  ],
+  "nbc|AZ|tucson": [
+   "kvoa"
+  ],
+  "nbc|AZ|yuma": [
+   "kyma"
+  ],
+  "nbc|CA|bakersfield": [
+   "kget"
+  ],
+  "nbc|CA|chico\u2013redding": [
+   "knvn"
+  ],
+  "nbc|CA|eureka": [
+   "kiem"
+  ],
+  "nbc|CA|fresno": [
+   "ksee"
+  ],
+  "nbc|CA|los angeles": [
+   "knbc"
+  ],
+  "nbc|CA|monterey": [
+   "ksbw"
+  ],
+  "nbc|CA|palm springs": [
+   "kmir"
+  ],
+  "nbc|CA|sacramento": [
+   "kcra"
+  ],
+  "nbc|CA|san diego": [
+   "knsd"
+  ],
+  "nbc|CA|san francisco": [
+   "kntv"
+  ],
+  "nbc|CA|san luis obispo": [
+   "ksby"
+  ],
+  "nbc|CO|colorado springs": [
+   "koaa"
+  ],
+  "nbc|CO|denver": [
+   "kusa"
+  ],
+  "nbc|CO|grand junction": [
+   "kkco"
+  ],
+  "nbc|CT|hartford\u2013new haven": [
+   "wvit"
+  ],
+  "nbc|DC|washington": [
+   "wrc"
+  ],
+  "nbc|FL|fort myers": [
+   "wbbh"
+  ],
+  "nbc|FL|jacksonville": [
+   "wtlv"
+  ],
+  "nbc|FL|miami\u2013fort lauderdale": [
+   "wtvj"
+  ],
+  "nbc|FL|orlando": [
+   "wesh"
+  ],
+  "nbc|FL|panama city": [
+   "wjhg"
+  ],
+  "nbc|FL|tallahassee": [
+   "wtwc"
+  ],
+  "nbc|FL|tampa": [
+   "wfla"
+  ],
+  "nbc|FL|west palm beach": [
+   "wptv"
+  ],
+  "nbc|GA|albany": [
+   "walb"
+  ],
+  "nbc|GA|atlanta": [
+   "wxia"
+  ],
+  "nbc|GA|augusta": [
+   "wagt"
+  ],
+  "nbc|GA|columbus": [
+   "wltz"
+  ],
+  "nbc|GA|macon": [
+   "wmgt"
+  ],
+  "nbc|GA|savannah": [
+   "wsav"
+  ],
+  "nbc|HI|hilo": [
+   "ksix"
+  ],
+  "nbc|HI|honolulu": [
+   "khnl"
+  ],
+  "nbc|HI|wailuku": [
+   "kogg"
+  ],
+  "nbc|IA|cedar rapids": [
+   "kwwl"
+  ],
+  "nbc|IA|davenport": [
+   "kwqc"
+  ],
+  "nbc|IA|des moines": [
+   "who"
+  ],
+  "nbc|IA|sioux city": [
+   "ktiv"
+  ],
+  "nbc|ID|boise": [
+   "ktvb"
+  ],
+  "nbc|ID|idaho falls": [
+   "kpvi"
+  ],
+  "nbc|ID|twin falls": [
+   "ktft"
+  ],
+  "nbc|IL|champaign\u2013springfield": [
+   "wand"
+  ],
+  "nbc|IL|chicago": [
+   "wmaq"
+  ],
+  "nbc|IL|peoria": [
+   "week"
+  ],
+  "nbc|IL|quincy": [
+   "wgem"
+  ],
+  "nbc|IL|rockford": [
+   "wrex"
+  ],
+  "nbc|IN|evansville": [
+   "wfie"
+  ],
+  "nbc|IN|indianapolis": [
+   "wthr"
+  ],
+  "nbc|IN|south bend": [
+   "wndu"
+  ],
+  "nbc|IN|terre haute": [
+   "wtwo"
+  ],
+  "nbc|KS|garden city": [
+   "ksng"
+  ],
+  "nbc|KS|goodland": [
+   "ksnk"
+  ],
+  "nbc|KS|hays": [
+   "ksnc"
+  ],
+  "nbc|KS|salina": [
+   "ksnl"
+  ],
+  "nbc|KS|topeka": [
+   "ksnt"
+  ],
+  "nbc|KS|wichita": [
+   "ksnw"
+  ],
+  "nbc|KY|bowling green": [
+   "wnky"
+  ],
+  "nbc|KY|lexington": [
+   "wlex"
+  ],
+  "nbc|KY|louisville": [
+   "wave"
+  ],
+  "nbc|KY|paducah": [
+   "wpsd"
+  ],
+  "nbc|LA|alexandria": [
+   "kalb"
+  ],
+  "nbc|LA|baton rouge": [
+   "wvla"
+  ],
+  "nbc|LA|lafayette": [
+   "klaf"
+  ],
+  "nbc|LA|lake charles": [
+   "kplc"
+  ],
+  "nbc|LA|monroe": [
+   "ktve"
+  ],
+  "nbc|LA|new orleans": [
+   "wdsu"
+  ],
+  "nbc|LA|shreveport": [
+   "ktal"
+  ],
+  "nbc|MA|boston": [
+   "wbts"
+  ],
+  "nbc|MA|springfield": [
+   "wwlp"
+  ],
+  "nbc|MD|baltimore": [
+   "wbal"
+  ],
+  "nbc|MD|salisbury": [
+   "wrde"
+  ],
+  "nbc|ME|bangor": [
+   "wlbz"
+  ],
+  "nbc|ME|portland": [
+   "wcsh"
+  ],
+  "nbc|ME|presque isle": [
+   "wwpi"
+  ],
+  "nbc|MI|detroit": [
+   "wdiv"
+  ],
+  "nbc|MI|grand rapids": [
+   "wood"
+  ],
+  "nbc|MI|lansing": [
+   "wilx"
+  ],
+  "nbc|MI|marquette": [
+   "wluc"
+  ],
+  "nbc|MI|sault ste. marie": [
+   "wtom"
+  ],
+  "nbc|MI|traverse city": [
+   "wpbn"
+  ],
+  "nbc|MN|duluth": [
+   "kbjr"
+  ],
+  "nbc|MN|hibbing": [
+   "krii"
+  ],
+  "nbc|MN|mankato": [
+   "kmnf"
+  ],
+  "nbc|MN|minneapolis\u2013saint paul": [
+   "kare"
+  ],
+  "nbc|MN|rochester": [
+   "kttc"
+  ],
+  "nbc|MO|jefferson city": [
+   "komu"
+  ],
+  "nbc|MO|joplin": [
+   "ksnf"
+  ],
+  "nbc|MO|kansas city": [
+   "kshb"
+  ],
+  "nbc|MO|springfield": [
+   "kytv"
+  ],
+  "nbc|MO|st. joseph": [
+   "knpg"
+  ],
+  "nbc|MO|st. louis": [
+   "ksdk"
+  ],
+  "nbc|MS|greenwood": [
+   "wnbd"
+  ],
+  "nbc|MS|hattiesburg": [
+   "wdam"
+  ],
+  "nbc|MS|jackson": [
+   "wlbt"
+  ],
+  "nbc|MS|tupelo": [
+   "wtva"
+  ],
+  "nbc|MT|billings": [
+   "kulr"
+  ],
+  "nbc|MT|bozeman": [
+   "kdbz"
+  ],
+  "nbc|MT|butte": [
+   "ktvm"
+  ],
+  "nbc|MT|great falls": [
+   "ktgf"
+  ],
+  "nbc|MT|helena": [
+   "ktvh"
+  ],
+  "nbc|MT|kalispell": [
+   "kcfw"
+  ],
+  "nbc|MT|missoula": [
+   "keci"
+  ],
+  "nbc|NC|charlotte": [
+   "wcnc"
+  ],
+  "nbc|NC|greensboro": [
+   "wxii"
+  ],
+  "nbc|NC|greenville": [
+   "witn"
+  ],
+  "nbc|NC|raleigh\u2013durham": [
+   "wral"
+  ],
+  "nbc|NC|wilmington": [
+   "wect"
+  ],
+  "nbc|ND|bismarck": [
+   "kfyr"
+  ],
+  "nbc|ND|dickinson": [
+   "kqcd"
+  ],
+  "nbc|ND|fargo": [
+   "kvly"
+  ],
+  "nbc|ND|minot": [
+   "kmot"
+  ],
+  "nbc|ND|williston": [
+   "kumv"
+  ],
+  "nbc|NE|lincoln": [
+   "ksnb"
+  ],
+  "nbc|NE|north platte": [
+   "knop"
+  ],
+  "nbc|NE|omaha": [
+   "wowt"
+  ],
+  "nbc|NE|scottsbluff": [
+   "knep"
+  ],
+  "nbc|NM|albuquerque": [
+   "kob"
+  ],
+  "nbc|NM|farmington": [
+   "kobf"
+  ],
+  "nbc|NM|roswell": [
+   "kobr"
+  ],
+  "nbc|NV|las vegas": [
+   "ksnv"
+  ],
+  "nbc|NY|albany": [
+   "wnyt"
+  ],
+  "nbc|NY|binghamton": [
+   "wbgh"
+  ],
+  "nbc|NY|buffalo": [
+   "wgrz"
+  ],
+  "nbc|NY|elmira": [
+   "wetm"
+  ],
+  "nbc|NY|new york city": [
+   "wnbc"
+  ],
+  "nbc|NY|rochester": [
+   "whec"
+  ],
+  "nbc|NY|syracuse": [
+   "wstm"
+  ],
+  "nbc|NY|utica": [
+   "wktv"
+  ],
+  "nbc|NY|watertown": [
+   "wvnc"
+  ],
+  "nbc|OH|cincinnati": [
+   "wlwt"
+  ],
+  "nbc|OH|cleveland": [
+   "wkyc"
+  ],
+  "nbc|OH|columbus": [
+   "wcmh"
+  ],
+  "nbc|OH|dayton": [
+   "wdtn"
+  ],
+  "nbc|OH|lima": [
+   "wlio"
+  ],
+  "nbc|OH|toledo": [
+   "wnwo"
+  ],
+  "nbc|OH|youngstown": [
+   "wfmj"
+  ],
+  "nbc|OH|zanesville": [
+   "whiz"
+  ],
+  "nbc|OK|oklahoma city": [
+   "kfor"
+  ],
+  "nbc|OK|tulsa": [
+   "kjrh"
+  ],
+  "nbc|OR|bend": [
+   "ktvz"
+  ],
+  "nbc|OR|coos bay": [
+   "kmcb"
+  ],
+  "nbc|OR|eugene": [
+   "kmtr"
+  ],
+  "nbc|OR|klamath falls": [
+   "koti"
+  ],
+  "nbc|OR|medford": [
+   "kobi"
+  ],
+  "nbc|OR|portland": [
+   "kgw"
+  ],
+  "nbc|OR|roseburg": [
+   "ktcw"
+  ],
+  "nbc|PA|erie": [
+   "wicu"
+  ],
+  "nbc|PA|harrisburg": [
+   "wgal"
+  ],
+  "nbc|PA|johnstown": [
+   "wjac"
+  ],
+  "nbc|PA|philadelphia": [
+   "wcau"
+  ],
+  "nbc|PA|pittsburgh": [
+   "wpxi"
+  ],
+  "nbc|PA|scranton": [
+   "wbre"
+  ],
+  "nbc|RI|providence": [
+   "wjar"
+  ],
+  "nbc|SC|charleston": [
+   "wcbd"
+  ],
+  "nbc|SC|columbia": [
+   "wis"
+  ],
+  "nbc|SC|greenville": [
+   "wyff"
+  ],
+  "nbc|SC|myrtle beach": [
+   "wmbf"
+  ],
+  "nbc|SD|mitchell": [
+   "kdlv"
+  ],
+  "nbc|SD|rapid city": [
+   "knbn"
+  ],
+  "nbc|SD|sioux falls": [
+   "kdlt"
+  ],
+  "nbc|TN|chattanooga": [
+   "wrcb"
+  ],
+  "nbc|TN|jackson": [
+   "wnbj"
+  ],
+  "nbc|TN|johnson city": [
+   "wcyb"
+  ],
+  "nbc|TN|knoxville": [
+   "wbir"
+  ],
+  "nbc|TN|memphis": [
+   "wmc"
+  ],
+  "nbc|TN|nashville": [
+   "wsmv"
+  ],
+  "nbc|TX|abilene": [
+   "krbc"
+  ],
+  "nbc|TX|amarillo": [
+   "kamr"
+  ],
+  "nbc|TX|austin": [
+   "kxan"
+  ],
+  "nbc|TX|bryan": [
+   "kags"
+  ],
+  "nbc|TX|corpus christi": [
+   "kris"
+  ],
+  "nbc|TX|el paso": [
+   "ktsm"
+  ],
+  "nbc|TX|fort worth\u2013dallas": [
+   "kxas"
+  ],
+  "nbc|TX|harlingen": [
+   "kveo"
+  ],
+  "nbc|TX|houston": [
+   "kprc"
+  ],
+  "nbc|TX|laredo": [
+   "kgns"
+  ],
+  "nbc|TX|lubbock": [
+   "kcbd"
+  ],
+  "nbc|TX|midland\u2013odessa": [
+   "kwes"
+  ],
+  "nbc|TX|san angelo": [
+   "ksan"
+  ],
+  "nbc|TX|san antonio": [
+   "woai"
+  ],
+  "nbc|TX|sherman": [
+   "kten"
+  ],
+  "nbc|TX|tyler": [
+   "ketk"
+  ],
+  "nbc|TX|victoria": [
+   "kmol"
+  ],
+  "nbc|TX|waco": [
+   "kcen"
+  ],
+  "nbc|TX|wichita falls": [
+   "kfdx"
+  ],
+  "nbc|UT|salt lake city": [
+   "ksl"
+  ],
+  "nbc|VA|charlottesville": [
+   "wvir",
+   "wvir"
+  ],
+  "nbc|VA|harrisonburg": [
+   "wsvw"
+  ],
+  "nbc|VA|norfolk": [
+   "wavy"
+  ],
+  "nbc|VA|richmond": [
+   "wwbt"
+  ],
+  "nbc|VA|roanoke": [
+   "wsls"
+  ],
+  "nbc|VT|burlington": [
+   "wptz"
+  ],
+  "nbc|WA|kennewick": [
+   "kndu"
+  ],
+  "nbc|WA|seattle": [
+   "king"
+  ],
+  "nbc|WA|spokane": [
+   "khq"
+  ],
+  "nbc|WA|yakima": [
+   "kndo"
+  ],
+  "nbc|WI|eau claire": [
+   "weau"
+  ],
+  "nbc|WI|green bay": [
+   "wgba"
+  ],
+  "nbc|WI|madison": [
+   "wmtv"
+  ],
+  "nbc|WI|milwaukee": [
+   "wtmj"
+  ],
+  "nbc|WI|wausau": [
+   "wjfw"
+  ],
+  "nbc|WV|bluefield": [
+   "wvva"
+  ],
+  "nbc|WV|clarksburg": [
+   "wboy"
+  ],
+  "nbc|WV|huntington\u2013charleston": [
+   "wsaz"
+  ],
+  "nbc|WV|parkersburg": [
+   "wtap"
+  ],
+  "nbc|WV|wheeling": [
+   "wtov"
+  ],
+  "nbc|WY|casper": [
+   "kcwy"
+  ]
+ },
+ "state_single": {
+  "abc|CT": [
+   "wtnh"
+  ],
+  "abc|DC": [
+   "wjla"
+  ],
+  "abc|NH": [
+   "wmur"
+  ],
+  "abc|UT": [
+   "ktvx"
+  ],
+  "abc|VT": [
+   "wvny"
+  ],
+  "cbs|CT": [
+   "wfsb"
+  ],
+  "cbs|DC": [
+   "wusa"
+  ],
+  "cbs|HI": [
+   "kgmb"
+  ],
+  "cbs|NM": [
+   "kbim"
+  ],
+  "cbs|RI": [
+   "wpri"
+  ],
+  "cbs|UT": [
+   "kutv"
+  ],
+  "cbs|VT": [
+   "wcax"
+  ],
+  "cw|AR": [
+   "kasn"
+  ],
+  "cw|CT": [
+   "wcct"
+  ],
+  "cw|DC": [
+   "wdcw"
+  ],
+  "cw|ID": [
+   "kyuu"
+  ],
+  "cw|KS": [
+   "kscw"
+  ],
+  "cw|KY": [
+   "wbki"
+  ],
+  "cw|MA": [
+   "wlvi"
+  ],
+  "cw|MD": [
+   "wnuv"
+  ],
+  "cw|ME": [
+   "wpxt"
+  ],
+  "cw|NV": [
+   "kvcw"
+  ],
+  "cw|OR": [
+   "krcw"
+  ],
+  "cw|SC": [
+   "wspa"
+  ],
+  "cw|SD": [
+   "kclo"
+  ],
+  "cw|UT": [
+   "kucw"
+  ],
+  "cw|VT": [
+   "wnne"
+  ],
+  "cw|WV": [
+   "wqcw"
+  ],
+  "fox|AK": [
+   "ktby"
+  ],
+  "fox|CT": [
+   "wtic"
+  ],
+  "fox|DC": [
+   "wttg"
+  ],
+  "fox|MA": [
+   "wfxt"
+  ],
+  "fox|MD": [
+   "wbff"
+  ],
+  "fox|ME": [
+   "wfvx"
+  ],
+  "fox|OK": [
+   "kokh"
+  ],
+  "fox|PR": [
+   "wsjp"
+  ],
+  "fox|RI": [
+   "wnac"
+  ],
+  "fox|UT": [
+   "kstu"
+  ],
+  "fox|VT": [
+   "wfff"
+  ],
+  "nbc|CT": [
+   "wvit"
+  ],
+  "nbc|DC": [
+   "wrc"
+  ],
+  "nbc|NV": [
+   "ksnv"
+  ],
+  "nbc|RI": [
+   "wjar"
+  ],
+  "nbc|UT": [
+   "ksl"
+  ],
+  "nbc|VT": [
+   "wptz"
+  ],
+  "nbc|WY": [
+   "kcwy"
+  ]
+ }
+}
