@@ -16,6 +16,7 @@ import datetime as dt
 import json
 import os
 import sys
+import time
 import urllib.request
 import zoneinfo
 
@@ -25,10 +26,17 @@ UA = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit
 DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
 
 
-def fetch(url, timeout=45):
-    req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read().decode('utf-8', errors='ignore')
+def fetch(url, timeout=45, retries=2):
+    last = None
+    for _ in range(retries + 1):
+        try:
+            req = urllib.request.Request(url, headers=UA)
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read().decode('utf-8', errors='ignore')
+        except Exception as e:  # noqa: BLE001
+            last = e
+            time.sleep(1.5)
+    raise last
 
 
 def to_utc(date_str, hhmm):
@@ -304,6 +312,70 @@ def scrape_arydigital():
     return {'ary_digital_pk': progs}
 
 
+# ---------------------------------------------------------------- Aaj Entertainment
+def scrape_aajentertainment():
+    """aajentertainment.tv/schedule/ — day <h2> blocks + <tr><td>HH:MM</td><td>Title</td>
+    rows (24h Pakistan time). Titles carry a trailing "- R" repeat marker."""
+    h = fetch('https://www.aajentertainment.tv/schedule/')
+    daymap = {'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
+              'friday': 4, 'saturday': 5, 'sunday': 6}
+    progs = []
+    parts = re.split(
+        r'<h2[^>]*>\s*(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s*</h2>',
+        h, flags=re.I)
+    for k in range(1, len(parts) - 1, 2):
+        day = parts[k].lower()
+        if day not in daymap:
+            continue
+        content = parts[k + 1]
+        date = next_dow_date(daymap[day])
+        # each row is <tr>…<td><div>HH:MM</div></td><td><div>Title</div></td></tr>
+        rows = []
+        for tr in re.finditer(r'<tr[^>]*>(.*?)</tr>', content, re.S):
+            divs = re.findall(r'<div[^>]*>([^<]+)</div>', tr.group(1))
+            if len(divs) >= 2 and re.match(r'^\d{1,2}:\d{2}$', divs[0].strip()):
+                rows.append((divs[0].strip(), divs[1]))
+        for i, (hhmm, title) in enumerate(rows):
+            title = HTML.unescape(title).strip()
+            title = re.sub(r'\s*-\s*R\s*$', '', title, flags=re.I)  # repeat marker
+            title = re.sub(r'\s+', ' ', title).strip()
+            if not title:
+                continue
+            start = to_utc(date.isoformat(), hhmm)
+            if i + 1 < len(rows):
+                end = to_utc(date.isoformat(), rows[i + 1][0])
+            else:
+                end = start + dt.timedelta(hours=1)
+            if end <= start:
+                end += dt.timedelta(days=1)
+            progs.append((title, start, end))
+    return {'aaj_entertainment_pk': progs}
+
+
+# ---------------------------------------------------------------- ARY Zindagi
+def scrape_aryzindagi():
+    """aryzindagi.tv/api/schedule.php — JSON: {Schedule:[{dramaName, dramaTime
+    ("09:00 AM"), dramaDays:{monday:bool,...}}]}. Expand each drama across its
+    airing days (default 1h slot)."""
+    raw = fetch('https://aryzindagi.tv/api/schedule.php')
+    data = json.loads(raw)
+    daymap = {k: i for i, k in enumerate(DAYS)}
+    progs = []
+    for item in data.get('Schedule', []):
+        name = (item.get('dramaName') or '').strip()
+        hhmm = parse12(item.get('dramaTime') or '')
+        if not name or not hhmm:
+            continue
+        days = item.get('dramaDays') or {}
+        for day, on in days.items():
+            if not on or day not in daymap:
+                continue
+            date = next_dow_date(daymap[day])
+            start = to_utc(date.isoformat(), hhmm)
+            progs.append((name, start, start + dt.timedelta(hours=1)))
+    return {'ary_zindagi_pk': progs}
+
+
 SCRAPERS = {
     'harpalgeo.tv': scrape_harpalgeo,
     'geokahani.tv': scrape_geokahani,
@@ -314,6 +386,8 @@ SCRAPERS = {
     'hum.tv/world-hd': scrape_humtv_world_hd,
     'arydigital.tv': scrape_arydigital,
     'expressentertainment.tv': scrape_express_entertainment,
+    'aajentertainment.tv': scrape_aajentertainment,
+    'aryzindagi.tv': scrape_aryzindagi,
 }
 
 

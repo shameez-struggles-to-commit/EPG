@@ -48,6 +48,8 @@ PK_OVERRIDES = {
     'Hum TV Europe': 'hum_tv_europe_pk',
     'ARY Digital Asia': 'ary_digital_pk',
     'Express Entertainment': 'express_entertainment_pk',
+    'Aaj Entertainment': 'aaj_entertainment_pk',
+    'ARY Zindagi': 'ary_zindagi_pk',
 }
 
 # Curated aliases: provider channel name -> source display-name that has live
@@ -57,7 +59,7 @@ PK_OVERRIDES = {
 NAME_ALIASES = {
     # India (provider name -> verified-live source name)
     'Sony (Set India)': 'Sony Entertainment Television',
-    'Sony TV Asia': 'Sony Entertainment Television',  # same feed, Asia variant
+    'Sony TV Asia': 'Sony TV',  # international/Asia feed = Sky/Virgin "SONY TV", not domestic SET
     'Zee Cinema Asia': 'Zee Cinema',                  # IN4 has zee cinema uk/usa too
     'Zee Cinema ME': 'Zee Cinema',
     'TV 9 Gujarati': 'TV9 Gujarati',
@@ -71,6 +73,26 @@ NAME_ALIASES = {
     'MTV Beats': 'MTV',              # tvepg 'mtv' if live; harmless if not
     'Food Food': 'Foodxp',           # rebranded; foodxp has live data
     'Khabrain Abhi Tak': 'News 18 India',
+    # 2026-08-15 expansion — India/Pakistan/diaspora (verified live progs)
+    'Maha Movie': 'Maha Movies',                  # singular/plural (tvepg/IN1)
+    'Sankara TV': 'Sri Sankara',                  # honorific prefix (IN1)
+    'Samachar Plus Rajasthan': 'Samachar Plus',   # regional suffix (IN1)
+    'Victers TV': 'Kite Victers',                 # "Kite" = Kerala infra prefix (IN1)
+    'ARY News': 'ATN ARY News',                   # ASIANTELEVISION1 ATN prefix
+    'B4U Plus': 'ATN B4U Plus',                   # ASIANTELEVISION1 ATN prefix
+    'ARY QTV': 'QTV Religious',                   # Sky UK display-name
+    'News 18 Bengali': 'News18 Bangla',           # bengali->bangla synonym (tvepg)
+    'Kalaignar Murasu TV': 'Murasu TV',           # tataplay/dishtv/airtel name
+    'Channel i': 'Channel i (Bangladesh)',        # region parenthetical (tvpassport)
+    'Channel24': 'Channels 24',                   # singular/plural (UK1)
+    'EWTN US': 'EWTN',                            # region suffix (IE1)
+    'SuperSport Schools': 'SuperSport School HD', # singular/plural (epg.pw)
+    'Sky Cinema Highlight': 'Sky Cinema Highlights HD',  # singular/plural
+    'Alfa Dramas': 'Alfa Drama',                  # singular/plural (AE1)
+    # norm-form keys (catch every HD/SD/FHD variant of one channel)
+    'star gold uk': 'Utsav Gold',                 # renamed 2023 (Sky/Virgin)
+    'star plus uk': 'Utsav Plus',                 # renamed 2023
+    'star bharat uk': 'Utsav Bharat',             # renamed 2023
     # Greece (2026-08-16): Latin provider names vs Greek-script source names.
     # Keys in norm() form so "ERT 1" / "ERT 1 HD" / "ERT 2 HD" etc. all hit.
     # 'HD' normalizes away on both sides, so 'ΕΡΤ1 HD' keys as 'ερτ1'.
@@ -125,7 +147,7 @@ COUNTRY_SOURCES = {
 
 # dedicated fetcher sources: which countries each may serve
 FETCHER_COUNTRIES = {
-    'skyhawk': {'UK', 'IE', 'DE', 'AT', 'CH', 'IT'},
+    'skyhawk': {'UK', 'IE', 'DE', 'AT', 'CH', 'IT', 'IN', 'PK', 'BD'},
     'dstv': {'ZA'},
     'epgone': {'UA'},
     'bein': {'QA', 'AE', 'SA', 'MA', 'EG'},
@@ -183,10 +205,16 @@ DIASPORA_EXACT = {
     # NOTE: meo.pt excluded (Venus.ar = Arabic Venus, not PK Venus) and
     # AL1 excluded (ATV.al = Albanian ATV, not PK ATV) — single-word
     # namesake false positives found in the 2026-08-15 audit.
-    'IN': ['epgshare01:AE1', 'epgshare01:UK1', 'iptv-org:tvpassport.com',
-           'iptv-org:tv24.co.uk'],
+    'IN': ['epgshare01:AE1', 'epgshare01:UK1', 'epgshare01:ASIANTELEVISION1',
+           'iptv-org:tvpassport.com', 'iptv-org:tv24.co.uk'],
     'BD': ['epgshare01:IN1', 'epgshare01:IN4', 'tvepg', 'epgshare01:UK1',
            'iptv-org:tvpassport.com', 'iptv-org:tv24.co.uk'],
+    # Reverse diaspora: a Pakistani/Indian channel listed under a host-country
+    # category (UK "Asian" / US / CA) should still reach its home-country
+    # sources (EXACT matches only, never fuzzy).
+    'UK': ['epgshare01:IN1', 'epgshare01:IN4', 'tvepg'],
+    'US': ['epgshare01:IN1', 'epgshare01:IN4', 'tvepg', 'epgshare01:ASIANTELEVISION1'],
+    'CA': ['epgshare01:IN1', 'epgshare01:IN4', 'tvepg', 'epgshare01:ASIANTELEVISION1'],
 }
 
 

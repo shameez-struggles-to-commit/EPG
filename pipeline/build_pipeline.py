@@ -117,8 +117,12 @@ def parse_xmltv(path, needed_ids, min_stop=None):
             continue
         st, sp = attrs.get('start', ''), attrs.get('stop', '')
         if min_stop and sp:
-            # compare on the raw digits before any offset application
-            if sp[:8] < min_stop:
+            # Normalize to UTC BEFORE comparing. A +0800 feed whose raw local
+            # stop is "20260815 +0800" is actually 20260814 UTC ("yesterday") —
+            # comparing raw digits kept it here, then the write-time gate
+            # (which DOES normalize) dropped it, leaving channels empty.
+            nsp = norm_time(sp)
+            if nsp and nsp[:8] < min_stop:
                 n_stale += 1
                 continue
         body = m.group(2)

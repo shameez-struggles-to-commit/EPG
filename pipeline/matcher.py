@@ -26,7 +26,7 @@ QUALITY_RE = re.compile(r'\b(?:fhd|uhd|qhd|hd|sd|4k|1080p?|720p?|hevc|h265|h264)
 # markers (east/west/us/usa/uk/ca) or network discriminators here — dropping
 # them collapses genuinely different channels ("BBC One East" vs "BBC One West",
 # "Sky News UK" vs "Sky News"). Only truly meaningless words belong here.
-FILLER = {'the', 'tv', 'channel', 'network', 'and'}
+FILLER = {'the', 'tv', 'channel', 'network'}
 
 WORD_RE = re.compile(r'\w+', re.UNICODE)
 
@@ -68,9 +68,12 @@ def norm(s):
     # strip combining marks (é -> e, ü -> u) while keeping non-Latin scripts intact
     s = ''.join(c for c in s if not unicodedata.combining(c))
     s = s.lower()
+    s = s.replace('&', ' and ')  # before punctuation strip: "&TV" -> "and tv"
     s = QUALITY_RE.sub(' ', s)
     s = COUNTRY_SUFFIX_RE.sub(' ', s)
     s = re.sub(r'[^\w\s]', ' ', s)
+    # digit-concatenation split: "News18" <-> "News 18", "Mh1" <-> "Mh 1"
+    s = re.sub(r'(?<=[a-z])(?=\d)|(?<=\d)(?=[a-z])', ' ', s)
     toks = [t for t in WORD_RE.findall(s) if t not in FILLER]
     return ' '.join(toks)
 
@@ -170,10 +173,30 @@ EVENT_NAME_RES = (
     re.compile(r'^MC \|', re.I),               # Music Choice audio loops
 )
 
+# Real LINEAR channels the provider misfiles under a non-linear category.
+# Checked in is_non_linear BEFORE the category-keyword test, so e.g.
+# "Willow Cricket HD" (cat "VIP | WIllow") and "EPL | LFC TV" (cat "EPL |
+# Clubs TV") still match their real schedules. Names are scoped so the
+# genuinely event-only siblings ("Willow 1 (Event Only)") stay dropped.
+LINEAR_OVERRIDE_RES = (
+    re.compile(r'\bWillow Cricket\b', re.I),   # not "Willow 1 (Event Only)"
+    re.compile(r'\bbeIN Sports Xtra\b', re.I),
+    re.compile(r'\bNBA Tv\b', re.I),
+    re.compile(r'\bLFC TV\b', re.I),
+    re.compile(r'\bMUTV\b', re.I),
+)
+
 
 def is_non_linear(category_name, channel_name=None):
     c = (category_name or '').lower()
     if any(k in c for k in NON_LINEAR_KEYWORDS):
+        # real LINEAR channels the provider misfiled under a non-linear
+        # category (VIP/EPL/NBA League Pass) — force them through so their
+        # epg_id (provider feed) or a source match can supply real schedules.
+        if channel_name:
+            for rx in LINEAR_OVERRIDE_RES:
+                if rx.search(channel_name):
+                    return False
         return True
     if channel_name:
         for rx in EVENT_NAME_RES:

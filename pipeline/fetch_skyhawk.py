@@ -32,6 +32,7 @@ from xml.sax.saxutils import escape, quoteattr
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from matcher import norm
+from build_mapping import NAME_ALIASES
 
 UA = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'}
 CHANNELS_URL = ('https://raw.githubusercontent.com/iptv-org/epg/master/'
@@ -46,6 +47,9 @@ COUNTRY_TERRITORY = {
     'UK': 'GB', 'GB': 'GB', 'IRE': 'GB', 'IE': 'GB',
     'DE': 'DE', 'AT': 'DE', 'CH': 'DE',
     'IT': 'IT',
+    # South Asian diaspora feeds are carried on Sky UK (Sony/Zee/Colors/B4U/
+    # Utsav + ARY/Geo/Hum/PTC/AajTak) — map them to the GB lineup.
+    'IN': 'GB', 'PK': 'GB', 'BD': 'GB',
 }
 
 NONLIN_RE = re.compile(
@@ -123,6 +127,11 @@ def main():
             continue
         nname = norm(s.get('name', ''))
         sid_full = by_t.get(terr, {}).get(nname)
+        if not sid_full:
+            # diaspora alias fallback: "Sony TV Asia" -> "Sony TV", etc.
+            alias = NAME_ALIASES.get(s.get('name', '')) or NAME_ALIASES.get(nname)
+            if alias:
+                sid_full = by_t.get(terr, {}).get(norm(alias))
         if sid_full and sid_full not in targets:
             targets[sid_full] = s.get('name', '')
 
