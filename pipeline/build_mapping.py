@@ -50,6 +50,29 @@ PK_OVERRIDES = {
     'Express Entertainment': 'express_entertainment_pk',
 }
 
+# Curated aliases: provider channel name -> source display-name that has live
+# programme data (verified 2026-08-15). Applied BEFORE exact matching, after
+# PK_OVERRIDES. Fixes naming-convention mismatches (parentheticals, regional
+# suffixes, historical names) that norm() + fuzzy can't bridge.
+NAME_ALIASES = {
+    # India (provider name -> verified-live source name)
+    'Sony (Set India)': 'Sony Entertainment Television',
+    'Sony TV Asia': 'Sony Entertainment Television',  # same feed, Asia variant
+    'Zee Cinema Asia': 'Zee Cinema',                  # IN4 has zee cinema uk/usa too
+    'Zee Cinema ME': 'Zee Cinema',
+    'TV 9 Gujarati': 'TV9 Gujarati',
+    'TV 9 Kannada': 'TV9 Kannada',
+    'TV 9 Marathi': 'TV9 Marathi',
+    'TV 9 Telugu': 'TV9 Telugu',
+    'News 18 Tamil': 'News 18 Tamilnadu',
+    'News 18 Uttar Pradesh & Uttarakhand': 'News 18 India',
+    'Sahara Samay': 'News 18 India',  # renamed channel; feed carries it
+    'Manoranjan Movies': 'Manoranjan',
+    'MTV Beats': 'MTV',              # tvepg 'mtv' if live; harmless if not
+    'Food Food': 'Foodxp',           # rebranded; foodxp has live data
+    'Khabrain Abhi Tak': 'News 18 India',
+}
+
 JUNK_EPG_RE = re.compile(
     r'(\.epg$|\.L$|\.UFC$|\.BRLIVE$|\.ESPN$|\.MLB$|\.NFL$|\.NBA$|\.NHL$|\.PPV$|'
     r'\.EVENT$|servicestatus|event3hour|^1\.L$)', re.I)
@@ -202,7 +225,26 @@ def main():
             cands.append((TIER['pk'], 'pk', PK_OVERRIDES[name], 'override', 1.0))
             stats['pk'] += 1
 
-        # 1b. US call-sign match (very precise; US locals named "FOX: FL | Tampa | WTVT")
+        # 1b. curated alias (naming-convention bridge; append a candidate from
+        # EVERY source that has the aliased name — the cascade then picks the
+        # first one with live programmes)
+        alias = NAME_ALIASES.get(name)
+        if alias:
+            for src in name_sources:
+                if src.startswith('epgshare01') and src not in allowed_eshare:
+                    continue
+                if src in FETCHER_COUNTRIES and cc and cc not in FETCHER_COUNTRIES[src]:
+                    continue
+                if src.startswith('iptv-org') and cc and cc != 'IN':
+                    continue
+                if src == 'tvepg' and cc and cc != 'IN':
+                    continue
+                eids = src_idx[src].exact(alias)
+                if eids:
+                    cands.append((src_tier(src), src, eids[0], 'alias', 0.97))
+                    stats['alias'] += 1
+
+        # 1c. US call-sign match (very precise; US locals named "FOX: FL | Tampa | WTVT")
         cs = extract_callsign(name)
         if cs and cs in cs_index:
             src, i = cs_index[cs][0]

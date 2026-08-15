@@ -25,6 +25,7 @@ comma list to download a subset (e.g. for local dev).
 """
 
 import gzip
+import html
 import json
 import os
 import re
@@ -122,13 +123,15 @@ def build_index(path):
 
     Robust to channels where <icon>/<url> elements precede <display-name>
     (e.g. epgshare01 US locals use Gracenote imagery + url before the name).
+    Display-names are HTML-unescaped so '&amp;pictures' indexes as
+    '&pictures' (norm 'pictures') and matches the provider's '& pictures'.
     """
     txt = read_xml(path)
     idx = SourceIndex()
     for m in CHAN_BLOCK_RE.finditer(txt):
         dn = DN_RE.search(m.group('body'))
         if dn:
-            idx.add(dn.group(1), m.group('id'))
+            idx.add(html.unescape(dn.group(1)), m.group('id'))
     return idx
 
 
@@ -139,7 +142,7 @@ def build_callsign_index(path):
     for m in CHAN_BLOCK_RE.finditer(txt):
         dn = DN_RE.search(m.group('body'))
         if dn:
-            cs = call_sign(dn.group(1))
+            cs = call_sign(html.unescape(dn.group(1)))
             if cs:
                 out[cs].append(m.group('id'))
     return out
