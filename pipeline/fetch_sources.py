@@ -32,6 +32,11 @@ UA = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit
 
 EPG_PW_URL = 'https://epg.pw/xmltv/epg.xml.gz'
 ESHARE_BASE = 'https://epgshare01.online/epgshare01/epg_ripper_{}.xml.gz'
+# mitthu786/tvepg — India OTT EPG (JioTV/TataPlay/Zee5/SonyLIV/SunNXT), one AIO file
+TVEPG_URL = 'https://raw.githubusercontent.com/mitthu786/tvepg/main/epg.xml.gz'
+# globetvapp/epg — free country XMLTV on GitHub (country dir capitalized, file lowercase)
+GLOBETV_BASE = 'https://raw.githubusercontent.com/globetvapp/epg/main/{}/{}'
+GLOBETV_FILES = {'india': 5}  # country -> number of numbered .xml.gz files
 
 # Channel parsing (robust: icon/url may precede display-name).
 CHAN_BLOCK_RE = re.compile(r'<channel\s+id="(?P<id>[^"]*)"[^>]*>(?P<body>.*?)</channel>', re.S)
@@ -133,6 +138,29 @@ def main():
             manifest.append({'source': f'epgshare01:{name}', 'file': os.path.abspath(dest), 'kind': 'name'})
         except Exception as e:  # noqa: BLE001
             print(f'[epgshare01] {name} FAILED: {e}', file=sys.stderr)
+
+    # mitthu786/tvepg — India OTT EPG (one AIO file, 1500+ channels)
+    tvepg_path = os.path.join(outdir, 'tvepg_india.xml.gz')
+    try:
+        n = download(TVEPG_URL, tvepg_path)
+        print(f'[tvepg] {n} bytes')
+        manifest.append({'source': 'tvepg', 'file': os.path.abspath(tvepg_path), 'kind': 'name'})
+    except Exception as e:  # noqa: BLE001
+        print(f'[tvepg] FAILED: {e}', file=sys.stderr)
+
+    # globetvapp/epg country files
+    for country, nfiles in GLOBETV_FILES.items():
+        cdir = country.capitalize()
+        for i in range(1, nfiles + 1):
+            dest = os.path.join(outdir, f'globetv_{country}{i}.xml.gz')
+            url = GLOBETV_BASE.format(cdir, f'{country}{i}.xml.gz')
+            try:
+                n = download(url, dest)
+                print(f'[globetv] {country}{i}: {n} bytes')
+                manifest.append({'source': f'globetv:{country}{i}',
+                                 'file': os.path.abspath(dest), 'kind': 'name'})
+            except Exception as e:  # noqa: BLE001
+                print(f'[globetv] {country}{i} FAILED: {e}', file=sys.stderr)
 
     # iptv-org per-site grabs (io_jiotv.xml, io_tataplay.xml, ...) — indexed as
     # separate sources so numeric site_ids can't collide across sites.

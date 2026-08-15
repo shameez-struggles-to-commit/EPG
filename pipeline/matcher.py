@@ -30,6 +30,18 @@ FILLER = {'the', 'tv', 'channel', 'network', 'and'}
 
 WORD_RE = re.compile(r'\w+', re.UNICODE)
 
+# Dotted ISO-3166-alpha-2 country suffix on a display-name ("Aaj Tak HD.in",
+# "Colors HD.us"). globetvapp and similar aggregators append these; strip them
+# so the name normalizes cleanly. NOT applied to standalone regional words
+# ("BBC One UK") — only the dot-attached form.
+COUNTRY_SUFFIX_RE = re.compile(
+    r'\.(in|pk|uk|us|ca|de|fr|it|gr|ro|es|pl|pt|au|za|nl|se|no|fi|dk|tr|th|ie|nz|'
+    r'br|cz|mx|ar|jp|il|ae|sa|at|be|bg|ch|hr|hu|rs|kr|sg|id|my|ru|al|ua|bd|eg|ng|'
+    r'ke|cy|ee|is|lu|lv|lt|mt|sk|si|qa|kw|om|bh|jo|lb|iq|ir|af|np|lk|mv|mm|kh|la|'
+    r'vn|tw|hk|mo|cn|tw|ph|az|ge|am|kz|uz|tm|kg|tj|mn|et|tz|ug|gh|zm|zw|mu|mg|bw|'
+    r'na|sz|ls|mw|mz|ao|cm|ci|sn|ml|bf|ne|td|sd|ss|so|dj|er|rw|bi|cd|cg|ga|gq)\b',
+    re.I)
+
 
 def norm(s):
     """Normalize a channel name for comparison. Returns a token string."""
@@ -40,6 +52,7 @@ def norm(s):
     s = ''.join(c for c in s if not unicodedata.combining(c))
     s = s.lower()
     s = QUALITY_RE.sub(' ', s)
+    s = COUNTRY_SUFFIX_RE.sub(' ', s)
     s = re.sub(r'[^\w\s]', ' ', s)
     toks = [t for t in WORD_RE.findall(s) if t not in FILLER]
     return ' '.join(toks)

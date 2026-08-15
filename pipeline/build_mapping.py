@@ -141,9 +141,9 @@ def main():
                     cs_index[cs].append((src, i))
 
     def src_tier(s):
-        if s.startswith('iptv-org'):
+        if s.startswith('iptv-org') or s == 'tvepg':
             return TIER['iptv-org']
-        if s.startswith('epgshare01'):
+        if s.startswith('epgshare01') or s.startswith('globetv'):
             return TIER['epgshare01']
         if s == 'epg.pw':
             return TIER['epg.pw']
@@ -186,11 +186,13 @@ def main():
             cands.append((TIER['epgshare01'], src, i, 'callsign', 0.98))
             stats['callsign'] += 1
 
-        # 2. name-based sources, exact (country-gated for epgshare01 / iptv-org)
+        # 2. name-based sources, exact (country-gated for epgshare01 / iptv-org / tvepg / globetv)
         for src in name_sources:
             if src.startswith('epgshare01') and src not in allowed_eshare:
                 continue
             if src.startswith('iptv-org') and cc and cc != 'IN':
+                continue
+            if (src == 'tvepg' or src.startswith('globetv')) and cc and cc != 'IN':
                 continue
             eids = src_idx[src].exact(name)
             if eids:
@@ -213,6 +215,8 @@ def main():
             if src.startswith('epgshare01') and src not in allowed_eshare:
                 continue
             if src.startswith('iptv-org') and cc and cc != 'IN':
+                continue
+            if (src == 'tvepg' or src.startswith('globetv')) and cc and cc != 'IN':
                 continue
             for sc, cn, cid in src_idx[src].fuzzy(name, threshold=args.fuzzy_threshold, limit=2):
                 cands.append((50 + src_tier(src), src, cid, 'fuzzy', round(sc, 2)))
