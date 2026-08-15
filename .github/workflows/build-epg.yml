@@ -98,7 +98,7 @@ jobs:
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
         run: |
           python3 - <<'PYEOF'
-          import gzip, json, re, os, subprocess
+          import gzip, json, re, os, subprocess, io
           d = gzip.open('public/guide.xml.gz','rt',errors='ignore').read()
           new_chans = len(re.findall(r'<channel ', d))
           new_progs = len(re.findall(r'<programme', d))
@@ -117,28 +117,27 @@ jobs:
 
           # coverage-drop detection vs the currently deployed guide
           url = "https://shameez-struggles-to-commit.github.io/EPG/guide.xml.gz"
+          prev_chans = 0
           try:
-              prev = subprocess.run(['curl','-sL','-A','Mozilla/5.0',url],
-                                    capture_output=True, text=True, timeout=120).stdout
-              import gzip as gz, io
-              prev_chans = len(re.findall(r'<channel ', gz.open(io.BytesIO(prev.encode('latin1','ignore')),'rt',errors='ignore').read())) if prev else 0
+              tmp = '/tmp/prev_guide.xml.gz'
+              subprocess.run(['curl','-sL','-A','Mozilla/5.0','-o',tmp,url],
+                             capture_output=True, timeout=120)
+              if os.path.exists(tmp) and os.path.getsize(tmp) > 0:
+                  prev_chans = len(re.findall(r'<channel ', gzip.open(tmp,'rt',errors='ignore').read()))
           except Exception:
               prev_chans = 0
-          drop = prev_chans and new_chans < prev_chans * 0.90
+          drop = bool(prev_chans) and new_chans < prev_chans * 0.90
           print(f'deployed channels: {prev_chans}, new: {new_chans}, drop={drop}')
-          open(os.environ.get('GITHUB_ENV','/dev/null'),'a').write(f'COVERAGE_DROP={"1" if drop else "0"}\n')
-          open(os.environ.get('GITHUB_ENV','/dev/null'),'a').write(f'NEW_CHANS={new_chans}\n')
-          PYEOF
 
-      - name: Notify coverage drop
-        if: env.COVERAGE_DROP == '1'
-        env:
-          NTFY_URL: ${{ secrets.NTFY_URL }}
-          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
-        run: |
-          curl -s -H "Authorization: Bearer $NTFY_TOKEN" \
-            -d "⚠️ EPG coverage dropped: deployed had more channels than today's build ($NEW_CHANS new). Check the pipeline." \
-            "$NTFY_URL/hermes-shameez-a7f9c2" || true
+          if drop:
+              ntfy = os.environ.get('NTFY_URL','')
+              tok = os.environ.get('NTFY_TOKEN','')
+              if ntfy and tok:
+                  subprocess.run(['curl','-s','-H',f'Authorization: Bearer {tok}',
+                                  '-d', f'⚠️ EPG coverage dropped: {new_chans} channels vs {prev_chans} deployed. Check the pipeline.',
+                                  f'{ntfy}/hermes-shameez-a7f9c2'], timeout=30)
+                  print('coverage-drop ntfy sent')
+          PYEOF
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
