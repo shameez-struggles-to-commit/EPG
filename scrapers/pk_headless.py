@@ -79,8 +79,13 @@ def scrape():
                 user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
                            'AppleWebKit/537.36 (KHTML, like Gecko) '
                            'Chrome/126.0 Safari/537.36').new_page()
-            pg.goto(URL, wait_until='domcontentloaded', timeout=45000)
-            pg.wait_for_timeout(5000)
+            pg.goto(URL, wait_until='domcontentloaded', timeout=60000)
+            # wait for the first day pane to exist (JS render), with fallback
+            try:
+                pg.wait_for_selector('#Monday', timeout=30000)
+            except Exception:  # noqa: BLE001
+                pass
+            pg.wait_for_timeout(3000)
             for di, day in enumerate(DAYS):
                 # pane may be absent for some day
                 pane = pg.query_selector(f'#{day.capitalize()}')
@@ -114,6 +119,9 @@ def main():
             {'title': t, 'start': s, 'stop': e} for t, s, e in progs]}
         json.dump(out, open(out_path, 'w'), indent=1)
         print(json.dumps({c: len(p) for c, p in out.items()}))
+        if not progs:
+            print('[WARN] aryzindagi.tv: 0 programmes parsed '
+                  '(page may have changed or JS blocked)', file=sys.stderr)
         return 0 if progs else 1
     except RuntimeError as e:
         print(f'[SKIP] {e}', file=sys.stderr)

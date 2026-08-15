@@ -57,12 +57,21 @@ SITES = [
     'dstv.com',            # ZA/Africa
 ]
 
-# sites whose files live in a differently-named directory
-DIR_OVERRIDES = {
-    'www.magenta.tv': 'magenta.tv',
-    'web.magentatv.de': 'magentatv.de',
-    'programacion-tv.elpais.com': 'elpais.com',
+# sites that ship REGION-SUFFIXED channels files instead of <site>.channels.xml.
+# Value: list of region suffixes to merge ([] = all regions).
+REGION_FILES = {
+    'abc.net.au': [],            # merge all abc.net.au_* files (AU regional)
+    'allente.se': ['_se'],
+    'dstv.com': ['_za'],         # South Africa only (matches our ZA gap)
 }
+
+
+def github_dir_listing(site):
+    """Return file names in the site's dir via the GitHub contents API."""
+    url = f'https://api.github.com/repos/iptv-org/epg/contents/sites/{site}'
+    req = urllib.request.Request(url, headers=UA)
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return [x['name'] for x in json.loads(r.read().decode('utf-8'))]
 
 
 def http_get(url, timeout=60, retries=2):
@@ -93,30 +102,47 @@ def main():
             names.add(norm(n))
 
     for site in SITES:
-        d = DIR_OVERRIDES.get(site, site)
-        url = BASE.format(dir=d, site=site)
-        try:
-            txt = http_get(url)
-        except Exception as e:  # noqa: BLE001
-            print(f'[filter] {site}: download FAILED: {e}', file=sys.stderr)
-            continue
+        d = site
+        # determine which channels files to merge (plain vs region-suffixed)
+        plain_url = BASE.format(dir=d, site=site)
+        files = [('plain', plain_url)]
+        if site in REGION_FILES:
+            try:
+                listing = github_dir_listing(d)
+                suffixes = REGION_FILES[site]
+                files = [('region', f'https://raw.githubusercontent.com/'
+                                    f'iptv-org/epg/master/sites/{d}/{f}')
+                         for f in listing
+                         if f.startswith(site + '_') and f.endswith('.channels.xml')
+                         and (not suffixes or any(s in f for s in suffixes))]
+                files.sort(key=lambda x: x[1])
+            except Exception as e:  # noqa: BLE001
+                print(f'[filter] {site}: dir listing FAILED ({e}); trying plain',
+                      file=sys.stderr)
+                files = [('plain', plain_url)]
         keep = []
         total = 0
-        for m in re.finditer(r'<channel\s+([^>]*)>([^<]*)</channel>', txt):
-            total += 1
-            dn = m.group(2).strip()
-            nname = norm(dn)
-            if not nname:
+        for kind, url in files:
+            try:
+                txt = http_get(url)
+            except Exception as e:  # noqa: BLE001
+                print(f'[filter] {site}: download FAILED: {e}', file=sys.stderr)
                 continue
-            if nname in names or idx.fuzzy(dn, threshold=0.80, limit=1):
-                keep.append(m.group(0))
+            for m in re.finditer(r'<channel\s+([^>]*)>([^<]*)</channel>', txt):
+                total += 1
+                dn = m.group(2).strip()
+                nname = norm(dn)
+                if not nname:
+                    continue
+                if nname in names or idx.fuzzy(dn, threshold=0.80, limit=1):
+                    keep.append(m.group(0))
         out = os.path.join(outdir, f'{site}.channels.xml')
         with open(out, 'w', encoding='utf-8') as f:
             f.write('<?xml version="1.0" encoding="UTF-8"?>\n<channels>\n')
             for k in keep:
                 f.write(f'  {k}\n')
             f.write('</channels>\n')
-        print(f'[filter] {site}: kept {len(keep)}/{total} channels')
+        print(f'[filter] {site}: kept {len(keep)}/{total} channels ({len(files)} files)')
 
 
 if __name__ == '__main__':
