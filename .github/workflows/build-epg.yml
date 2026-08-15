@@ -47,6 +47,7 @@ jobs:
         env:
           NTFY_URL: ${{ secrets.NTFY_URL }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+        continue-on-error: true
         run: |
           python3 - <<'PYEOF'
           import json, os, subprocess
@@ -59,7 +60,10 @@ jobs:
               msg = "⚠️ EPG PK scraper(s) failed: " + ", ".join(f"{k}={status[k]['count']}" for k in failed)
               ntfy = os.environ.get('NTFY_URL',''); tok = os.environ.get('NTFY_TOKEN','')
               if ntfy and tok:
-                  subprocess.run(['curl','-s','-H',f'Authorization: Bearer {tok}','-d',msg,f'{ntfy}/hermes-shameez-a7f9c2'], timeout=30)
+                  try:
+                      subprocess.run(['curl','-s','--max-time','10','-H','Authorization: Bearer '+tok,'-d',msg,f'{ntfy}/hermes-shameez-a7f9c2'], timeout=15)
+                  except Exception as e:
+                      print(f'ntfy send failed (non-fatal): {e}')
               print(msg)
           else:
               print('all PK scrapers OK')
@@ -233,7 +237,7 @@ jobs:
           URL="https://${{ github.repository_owner }}.github.io/EPG/guide.xml.gz"
           STATUS=$(curl -sI -o /dev/null -w "%{http_code}" "$URL")
           SIZE=$(curl -s -o /dev/null -w "%{size_download}" "$URL")
-          curl -s -H "Authorization: Bearer $NTFY_TOKEN" \
+          curl -s --max-time 10 -H "Authorization: Bearer $NTFY_TOKEN" \
             -d "EPG Pipeline: guide.xml.gz HTTP $STATUS, ${SIZE} bytes — $(date -u)" \
-            "$NTFY_URL/hermes-shameez-a7f9c2" || true
+            "$NTFY_URL/hermes-shameez-a7f9c2" || echo "ntfy ping failed (NTFY_URL may be unreachable from CI — check Tailscale/public endpoint)"
           echo "ntfy ping sent"
