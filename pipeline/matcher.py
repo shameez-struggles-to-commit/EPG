@@ -1,109 +1,162 @@
 #!/usr/bin/env python3
-"""Channel matcher: map provider stream names → source-feed channel entries.
+"""Channel-name matching primitives for the EPG pipeline.
 
-Inputs (build time):
-  - provider streams JSON (name, category)
-  - epg.pw global index (id -> display-name)
-  - iptv-org database (id, name, alt_names, country) — for fuzzy/alias matching
-  - provider's own xmltv (optional long-tail layer)
-  - PK scrapers output (channel_key -> programmes)
+Provides:
+  - norm(): aggressive but safe channel-name normalization (strip quality
+    tokens, accents, filler words; tokenize). Used on BOTH provider stream
+    names and source display-names so they compare cleanly.
+  - token_set_ratio(): proper fuzzywuzzy-style token-set ratio (difflib-based)
+    — a real improvement over the old Jaccard overlap, which was too weak to
+    catch anything but near-exact matches.
+  - SourceIndex: builds a display-name -> channel-id index for one EPG source,
+    with an inverted token index so fuzzy matching is O(candidates) not O(N).
 
-Strategy per provider stream:
-  1. overrides.yaml (exact stream-name -> source key) — manual fixes, highest priority
-  2. normalized exact match against source display-names (country-hint aware)
-  3. iptv-org alt_names alias match
-  4. fuzzy match (token-set ratio >= threshold) — logged for review
-
-Output: mapping.json  {stream_name: {source, source_id, method, confidence}}
+Deliberately stdlib-only so it runs on the bare GitHub runner (and 3.9+).
 """
-import json
+
 import re
-import sys
 import unicodedata
 from collections import defaultdict
+from difflib import SequenceMatcher
 
-try:
-    import yaml
-except ImportError:
-    yaml = None
+# Quality/format tokens stripped from names ("BBC One | FHD |" -> "bbc one").
+QUALITY_RE = re.compile(r'\b(?:fhd|uhd|qhd|hd|sd|4k|1080p?|720p?|hevc|h265|h264)\b', re.I)
+
+# Filler words dropped as standalone tokens. IMPORTANT: do NOT add regional
+# markers (east/west/us/usa/uk/ca) or network discriminators here — dropping
+# them collapses genuinely different channels ("BBC One East" vs "BBC One West",
+# "Sky News UK" vs "Sky News"). Only truly meaningless words belong here.
+FILLER = {'the', 'tv', 'channel', 'network', 'and'}
 
 WORD_RE = re.compile(r'\w+', re.UNICODE)
-QUALITY_RE = re.compile(r'\b(fhd|uhd|hd|sd|4k|1080p?|720p?)\b', re.I)
-FILLER = {'the', 'tv', 'channel', 'network', 'east', 'west', 'us', 'usa', 'uk', 'hd', 'sd', 'fhd', 'uhd'}
 
 
 def norm(s):
-    s = unicodedata.normalize('NFKD', s.lower())
+    """Normalize a channel name for comparison. Returns a token string."""
+    if s is None:
+        return ''
+    s = unicodedata.normalize('NFKD', str(s))
+    # strip combining marks (é -> e, ü -> u) while keeping non-Latin scripts intact
+    s = ''.join(c for c in s if not unicodedata.combining(c))
+    s = s.lower()
     s = QUALITY_RE.sub(' ', s)
     s = re.sub(r'[^\w\s]', ' ', s)
     toks = [t for t in WORD_RE.findall(s) if t not in FILLER]
     return ' '.join(toks)
 
 
+def _ratio(a, b):
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def token_sort_ratio(a, b):
+    """Ratio of the two names after sorting their tokens (order-insensitive)."""
+    return _ratio(' '.join(sorted(a.split())), ' '.join(sorted(b.split())))
+
+
 def token_set_ratio(a, b):
-    """Simple Jaccard-ish token overlap score in [0,1]."""
+    """fuzzywuzzy-style token-set ratio in [0,1].
+
+    NOTE: kept for reference; NOT used by the matcher because its subset bias
+    scores "DW Espanol" -> "DW" as 1.0 (a false positive for channel matching).
+    Use dice_ratio() instead.
+    """
+    ta = a.split()
+    tb = b.split()
+    inter = set(ta) & set(tb)
+    if not inter:
+        return 0.0
+    inter_sorted = ' '.join(sorted(inter))
+    return max(
+        _ratio(inter_sorted, ' '.join(sorted(ta))),
+        _ratio(inter_sorted, ' '.join(sorted(tb))),
+    )
+
+
+def dice_ratio(a, b):
+    """Symmetric Dice coefficient over token sets, in [0,1].
+
+    Rewards near-identical token sets WITHOUT rewarding subset relationships
+    ("dw espanol" vs "dw" = 2*1/3 = 0.67, not 1.0). This is the safe fuzzy
+    score for channel matching.
+    """
     sa, sb = set(a.split()), set(b.split())
     if not sa or not sb:
         return 0.0
-    return len(sa & sb) / max(1, len(sa | sb))
+    return 2 * len(sa & sb) / (len(sa) + len(sb))
 
 
-class Matcher:
-    def __init__(self, pw_index, iptvorg_rows, overrides=None):
-        # display-name -> [pw ids]
-        self.pw_by_name = defaultdict(list)
-        for cid, disp in pw_index.get('disp', {}).items():
-            self.pw_by_name[norm(disp)].append(cid)
-        # iptv-org rows: id, name, alt_names, country
-        self.io_rows = iptvorg_rows
-        self.io_by_name = defaultdict(list)
-        for r in iptvorg_rows:
-            names = [r['name']] + (r.get('alt_names') or [])
-            for nm in names:
-                if nm:
-                    self.io_by_name[norm(nm)].append((r['id'], r.get('country')))
-        self.overrides = overrides or {}
+# Category names (lowercased) that indicate NON-linear channels: 24/7 restreams,
+# VIP sports restreams, radio, event hubs, adult. No real EPG exists for these,
+# so they are excluded from matching (per the user's requirement).
+NON_LINEAR_KEYWORDS = (
+    '24/7', 'vip', 'radio', 'for adults', 'event', 'flo', 'epl', 'efl',
+    'nfl', 'nba', 'mlb', 'nhl', 'nrl', 'ufc', 'ppv', 'fifa+', 'espn+',
+    'adult',
+)
 
-    def match(self, stream_name, country_hint=None):
-        # 1. overrides
-        if stream_name in self.overrides:
-            return {'source': 'override', 'source_id': self.overrides[stream_name], 'method': 'override', 'confidence': 1.0}
 
-        n = norm(stream_name)
+def is_non_linear(category_name):
+    c = (category_name or '').lower()
+    return any(k in c for k in NON_LINEAR_KEYWORDS)
+
+
+class SourceIndex:
+    """Index of one source's channels: normalized display-name -> channel id(s).
+
+    Supports exact lookup and a bounded fuzzy scan using an inverted
+    token->names index (only names sharing a token with the query are scored).
+    """
+
+    def __init__(self):
+        self.by_name = defaultdict(list)   # norm(display-name) -> [channel_id, ...]
+        self._token_index = defaultdict(set)  # token -> {norm(display-name), ...}
+        self._size = 0
+
+    def add(self, display_name, channel_id):
+        n = norm(display_name)
+        if not n or not channel_id:
+            return
+        self.by_name[n].append(channel_id)
+        for t in n.split():
+            self._token_index[t].add(n)
+        self._size += 1
+
+    def __len__(self):
+        return self._size
+
+    def exact(self, name):
+        """Return [channel_id, ...] for an exact normalized match, else []."""
+        return self.by_name.get(norm(name), [])
+
+    def fuzzy(self, name, threshold=0.85, limit=3, min_common=2):
+        """Return [(score, norm_name, channel_id), ...] above threshold, best first.
+
+        Uses the symmetric Dice coefficient and requires >= min_common shared
+        tokens, so single-word subset matches ("DW Espanol" -> "DW") are
+        rejected.
+        """
+        n = norm(name)
         if not n:
-            return None
-
-        # 2. exact against epg.pw display-names (country-hint aware)
-        if n in self.pw_by_name:
-            return {'source': 'epg.pw', 'source_id': self.pw_by_name[n][0], 'method': 'exact', 'confidence': 1.0}
-
-        # 3. iptv-org alias/name exact
-        if n in self.io_by_name:
-            cands = self.io_by_name[n]
-            best = cands[0]
-            for cid, cc in cands:
-                if country_hint and cc == country_hint:
-                    best = (cid, cc)
-                    break
-            return {'source': 'iptv-org', 'source_id': best[0], 'method': 'exact-alias', 'confidence': 0.95}
-
-        # 4. fuzzy against epg.pw names (bounded: only tokens sharing first token or country hint)
-        best_score, best_key = 0.0, None
-        first_tok = n.split()[0]
-        for cand in self.pw_keys_with_prefix(first_tok):
-            sc = token_set_ratio(n, cand)
-            if sc > best_score:
-                best_score, best_key = sc, cand
-        if best_score >= 0.75:
-            return {'source': 'epg.pw', 'source_id': self.pw_by_name[best_key][0],
-                    'method': 'fuzzy', 'confidence': round(best_score, 2)}
-        return None
-
-    def pw_keys_with_prefix(self, tok):
-        return self._pw_keys.get(tok, ())
-
-    def build_index(self):
-        self._pw_keys = defaultdict(tuple)
-        for k in self.pw_by_name:
-            for t in set(k.split()):
-                self._pw_keys[t] = self._pw_keys[t] + (k,)
+            return []
+        toks = n.split()
+        # Candidate names = union of names sharing any token with the query.
+        # Prefer the rarest token first to keep the candidate set small, but
+        # always include the first token (most discriminative for "X News").
+        cand = set()
+        for t in sorted(toks, key=lambda x: len(self._token_index.get(x, set())))[:3]:
+            cand |= self._token_index.get(t, set())
+        cand |= self._token_index.get(toks[0], set())
+        out = []
+        for cn in cand:
+            if cn == n:
+                continue  # exact handled separately
+            if len(set(toks) & set(cn.split())) < min_common:
+                continue
+            sc = dice_ratio(n, cn)
+            if sc >= threshold:
+                out.append((sc, cn, self.by_name[cn][0]))
+        out.sort(key=lambda x: (-x[0], x[1]))
+        return out[:limit]

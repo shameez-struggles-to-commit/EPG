@@ -1,187 +1,274 @@
 #!/usr/bin/env python3
-"""Master EPG pipeline — runs all layers and builds guide.xml.gz.
+"""Master merge: turn the provider streams + mapping + source feeds into the
+final XMLTV guide.
 
-Layer priority (first match wins per channel):
-  1. PK scrapers (Geo, Hum, ARY)
-  2. iptv-org grabber output (India: JioTV/TataPlay/DishTV/Airtel/Zee5)
-  3. epg.pw global feed (worldwide base, 15k+ channels)
-  4. Provider's own xmltv.php (US locals + misc long tail)
+Key behaviors:
+  - Fallback cascade: for each stream, walk its ordered candidate list and use
+    the first source that actually has programmes (fixes the ~1,900 dropped
+    channels caused by single-source mapping).
+  - Canonical channel id = epg_channel_id when real, else raw stream name
+    (matches TiviMate's native Xtream matching / name-fallback).
+  - Time normalization: every programme time is converted to a true UTC instant
+    (offsets are APPLIED, never silently discarded).
+  - Dedupe by canonical id (quality variants of the same channel share one id).
 
-Usage: python3 build_pipeline.py --streams streams.json --mapping mapping.json \
-  --pw epgpw.xml.gz --io io_guide.xml --provider provider.xml --pk pk_epg.json \
-  --out guide.xml.gz
+Inputs (see workflow):
+  --streams streams.json --mapping mapping.json --sources sources.json
+  --io io_india.xml --provider provider.xml --pk pk_epg.json --out guide.xml.gz
 """
+
 import argparse
+import datetime as dt
 import gzip
 import json
+import os
 import re
 import sys
 from collections import defaultdict
-from pathlib import Path
 from xml.sax.saxutils import escape, quoteattr
 
-# Add pipeline dir for matcher import
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from matcher import norm as _norm_name
+from matcher import is_non_linear
 
 # -- XMLTV parsing ---------------------------------------------------------
-CHAN_RE = re.compile(
-    r'<channel\s+id="([^"]*)"[^>]*>\s*<display-name[^>]*>([^<]*)</display-name>'
-    r'(?:\s*<icon\s+src="([^"]*)"[^>]*/>)?\s*</channel>', re.S)
+CHAN_BLOCK_RE = re.compile(r'<channel\s+id="(?P<id>[^"]*)"[^>]*>(?P<body>.*?)</channel>', re.S)
+DN_RE = re.compile(r'<display-name[^>]*>([^<]*)</display-name>')
+ICON_RE = re.compile(r'<icon\s+src="([^"]*)"')
 PROG_RE = re.compile(r'<programme\s+(.*?)>(.*?)</programme>', re.S)
 ATTR_RE = re.compile(r'(\w+)="([^"]*)"')
 TITLE_RE = re.compile(r'<title[^>]*>([^<]*)</title>')
 DESC_RE = re.compile(r'<desc[^>]*>([^<]*)</desc>')
 CAT_RE = re.compile(r'<category[^>]*>([^<]*)</category>')
+XMLTV_TS_RE = re.compile(r'^(\d{14})\s*([+-]\d{4})?$')
 
 
-def parse_xmltv(path):
-    """Returns (channels: id->(dn,icon), progs: id->[(start,stop,title,desc,cat)])."""
+def read(path):
     if path.endswith('.gz'):
-        data = gzip.open(path, 'rb').read().decode('utf-8', errors='ignore')
-    else:
-        data = open(path, 'r', errors='ignore').read()
+        return gzip.open(path, 'rb').read().decode('utf-8', errors='ignore')
+    return open(path, 'r', errors='ignore').read()
+
+
+def norm_time(t):
+    """Convert any XMLTV/ISO timestamp to a UTC instant 'YYYYMMDDHHMMSS +0000'.
+
+    Applies the offset (never discards it). Bare XMLTV times (no offset) are
+    assumed already-UTC (the common convention for epg.pw / epgshare01).
+    """
+    t = (t or '').strip()
+    if not t:
+        return t
+    # ISO-8601 (has 'T', or dash+colon like 2026-08-14 15:00:00)
+    if 'T' in t or ('-' in t and ':' in t):
+        iso = t.replace('Z', '+00:00')
+        try:
+            d = dt.datetime.fromisoformat(iso)
+        except ValueError:
+            return t
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=dt.timezone.utc)
+        return d.astimezone(dt.timezone.utc).strftime('%Y%m%d%H%M%S') + ' +0000'
+    m = XMLTV_TS_RE.match(t)
+    if not m:
+        return t
+    base = m.group(1)
+    off = m.group(2) or '+0000'
+    try:
+        y = int(base[0:4])
+        mo = int(base[4:6])
+        d = int(base[6:8])
+        h = int(base[8:10])
+        mi = int(base[10:12])
+        se = int(base[12:14])
+        sign = 1 if off[0] == '+' else -1
+        oh, om = int(off[1:3]), int(off[3:5])
+        delta = dt.timedelta(hours=sign * oh, minutes=sign * om)
+        local = dt.datetime(y, mo, d, h, mi, se)
+        utc = local - delta
+    except (ValueError, IndexError):
+        return t
+    return utc.strftime('%Y%m%d%H%M%S') + ' +0000'
+
+
+def parse_xmltv(path, needed_ids):
+    """Parse one XMLTV file, keeping only channels/programmes in needed_ids.
+
+    Returns (channels {id:(dn,icon)}, progs {id:[(start,stop,title,desc,cat)]}).
+    """
+    data = read(path)
     channels = {}
-    for m in CHAN_RE.finditer(data):
-        channels[m.group(1)] = (m.group(2) or m.group(1), m.group(3) or '')
+    for m in CHAN_BLOCK_RE.finditer(data):
+        cid = m.group('id')
+        if not cid or cid not in needed_ids:
+            continue
+        body = m.group('body')
+        dn = DN_RE.search(body)
+        ic = ICON_RE.search(body)
+        channels[cid] = (dn.group(1) if dn else cid, ic.group(1) if ic else '')
     progs = defaultdict(list)
     for m in PROG_RE.finditer(data):
         attrs = dict(ATTR_RE.findall(m.group(1)))
         ch = attrs.get('channel', '')
-        if not ch or ch not in channels:
+        if ch not in needed_ids:
             continue
-        t = TITLE_RE.search(m.group(2))
-        d = DESC_RE.search(m.group(2))
-        c = CAT_RE.search(m.group(2))
+        body = m.group(2)
+        t = TITLE_RE.search(body)
+        d = DESC_RE.search(body)
+        c = CAT_RE.search(body)
         progs[ch].append((attrs.get('start', ''), attrs.get('stop', ''),
-                          t.group(1) if t else '', d.group(1) if d else '', c.group(1) if c else ''))
+                          t.group(1) if t else '', d.group(1) if d else '',
+                          c.group(1) if c else ''))
     return channels, progs
-
-
-def fmt_time(iso):
-    if 'T' in iso or ':' in iso:
-        iso = iso.replace('-', '').replace(':', '').replace('T', '').replace('Z', '').split('.')[0]
-        return iso[:14] + ' +0000'
-    return iso
-
-
-def fmt_prog(start, stop, channel_id, title, desc, cat):
-    s = f'  <programme start={quoteattr(fmt_time(start))} stop={quoteattr(fmt_time(stop))} channel={quoteattr(channel_id)}>\n'
-    s += f'    <title lang="en">{escape(title)}</title>\n'
-    if desc:
-        s += f'    <desc lang="en">{escape(desc[:500])}</desc>\n'
-    if cat:
-        s += f'    <category lang="en">{escape(cat)}</category>\n'
-    s += '  </programme>\n'
-    return s
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--streams', required=True)
     ap.add_argument('--mapping', required=True)
-    ap.add_argument('--pw', help='epg.pw global XMLTV (.xml or .xml.gz)')
-    ap.add_argument('--io', help='iptv-org grabber output XML')
+    ap.add_argument('--sources', required=True, help='fetch_sources sources.json manifest')
     ap.add_argument('--provider', help='provider xmltv.php XML')
     ap.add_argument('--pk', help='PK scrapers JSON')
     ap.add_argument('--out', required=True)
+    ap.add_argument('--coverage-out', default=None)
     args = ap.parse_args()
 
     streams = json.load(open(args.streams))
     mapping = json.load(open(args.mapping))
-    pk = json.load(open(args.pk)) if args.pk else {}
+    pk = json.load(open(args.pk)) if args.pk and os.path.exists(args.pk) else {}
+    manifest = json.load(open(args.sources))
 
-    # Parse XMLTV layers
-    layers = {}
-    for name, path in [('epg.pw', args.pw), ('iptv-org', args.io), ('provider', args.provider)]:
-        if path and Path(path).exists():
-            ch, pr = parse_xmltv(path)
-            layers[name] = (ch, pr)
-            print(f'[layer] {name}: {len(ch)} channels, {sum(len(v) for v in pr.values())} programmes', file=sys.stderr)
+    # source label -> file path
+    src_files = {m['source']: m['file'] for m in manifest}
+    if args.provider:
+        src_files['provider'] = args.provider
 
-    # Build normalized display-name -> channel-id indexes for iptv-org layer
-    import unicodedata as _ud
-    def _norm(s):
-        s = _ud.normalize('NFKD', (s or '').lower())
-        s = re.sub(r'\b(fhd|uhd|hd|sd|4k)\b.*$', '', s)
-        s = re.sub(r'[^\w\s]', ' ', s)
-        drop = {'the', 'tv', 'channel', 'network'}
-        return ' '.join(t for t in re.findall(r'\w+', s) if t not in drop)
+    # collect candidate ids per source
+    need = defaultdict(set)
+    for sid, mp in mapping.items():
+        for c in mp['candidates']:
+            need[c['source']].add(c['source_id'])
 
-    io_name_index = {}
-    if 'iptv-org' in layers:
-        for cid, (dn, _) in layers['iptv-org'][0].items():
-            io_name_index[_norm(dn)] = cid
+    # parse each source once, keep only needed ids
+    channels, progs = {}, {}
+    for src, ids in need.items():
+        if src == 'pk':
+            continue
+        path = src_files.get(src)
+        if not path:
+            print(f'[warn] no file for source {src}', file=sys.stderr)
+            continue
+        try:
+            ch, pr = parse_xmltv(path, ids)
+            channels[src] = ch
+            progs[src] = pr
+            print(f'[layer] {src}: {len(ch)} channels, {sum(len(v) for v in pr.values())} programmes')
+        except Exception as e:  # noqa: BLE001
+            print(f'[layer] {src} FAILED: {e}', file=sys.stderr)
 
-    out_chans = {}   # name -> (display_name, icon)
-    out_progs = defaultdict(list)
+    # win: canonical_id -> (display_name, icon, [(start,stop,title,desc,cat)])
     used = defaultdict(int)
-    pk_names = {v['source_id'] for v in mapping.values() if v['source'] == 'pk'}
+    out_chans = {}
+    out_progs = defaultdict(list)
+    no_data = defaultdict(int)
 
     for s in streams:
-        name = s['name']
-        mp = mapping.get(name)
-
-        # Layer 1: PK scrapers (highest priority)
-        if mp and mp['source'] == 'pk':
-            progs = pk.get(mp['source_id'], [])
-            if progs:
-                out_chans[name] = (mp['source_id'].replace('_', ' ').title(), s.get('icon', ''))
-                for p in progs:
-                    out_progs[name].append((p['start'], p['stop'], p['title'], '', ''))
-                used['pk'] += 1
+        sid = str(s.get('stream_id', s.get('name', '')))
+        mp = mapping.get(sid)
+        if not mp:
             continue
+        cid = mp['canonical_id']
+        if not cid:
+            continue
+        picked = None
+        for c in mp['candidates']:
+            src, source_id = c['source'], c['source_id']
+            if src == 'pk':
+                if pk.get(source_id):
+                    picked = (src, source_id, c['method'])
+                    break
+                continue
+            pr = progs.get(src, {}).get(source_id)
+            if pr:
+                picked = (src, source_id, c['method'])
+                break
+        if not picked:
+            no_data['none'] += 1
+            continue
+        src, source_id, method = picked
 
-        matched = False
-        # Layer 2: iptv-org (display-name match — works for all channels, not just mapped)
-        if 'iptv-org' in layers and not matched:
-            chmap, progs = layers['iptv-org']
-            cid = io_name_index.get(_norm(name))
-            if cid and cid in progs:
-                out_chans[name] = chmap.get(cid, (name, s.get('icon', '')))
-                for (st, sp, ti, de, ca) in progs[cid]:
-                    out_progs[name].append((st, sp, ti, de, ca))
-                used['iptv-org'] += 1
-                matched = True
+        # programmes
+        plist = []
+        if src == 'pk':
+            for p in pk[source_id]:
+                plist.append((p['start'], p['stop'], p['title'], '', ''))
+        else:
+            plist = progs[src][source_id]
 
-        # Layer 3: epg.pw (via mapping)
-        if mp and mp['source'] == 'epg.pw' and 'epg.pw' in layers and not matched:
-            chmap, progs = layers['epg.pw']
-            sid = mp['source_id']
-            if sid in progs:
-                out_chans[name] = chmap.get(sid, (name, s.get('icon', '')))
-                for (st, sp, ti, de, ca) in progs[sid]:
-                    out_progs[name].append((st, sp, ti, de, ca))
-                used['epg.pw'] += 1
-                matched = True
+        # display-name: stream name first, then the source channel's name
+        dn, icon = '', s.get('icon', '')
+        if src != 'pk':
+            dn, _icon = channels.get(src, {}).get(source_id, ('', ''))
+            icon = icon or _icon
+        display_names = [s.get('name', '')]
+        if dn and _norm_name(dn) != _norm_name(s.get('name', '')):
+            display_names.append(dn)
 
-        # Layer 4: provider (via mapping)
-        if mp and mp['source'] == 'provider' and 'provider' in layers and not matched:
-            chmap, progs = layers['provider']
-            sid = mp['source_id']
-            if sid in progs:
-                out_chans[name] = chmap.get(sid, (name, s.get('icon', '')))
-                for (st, sp, ti, de, ca) in progs[sid]:
-                    out_progs[name].append((st, sp, ti, de, ca))
-                used['provider'] += 1
-                matched = True
+        if cid not in out_chans:
+            out_chans[cid] = (display_names, icon)
+        out_progs[cid].extend(plist)
+        used[src] += 1
 
-    # Write output
-    total = sum(len(v) for v in out_progs.values())
-    with gzip.open(args.out, 'wt', encoding='utf-8') if args.out.endswith('.gz') else open(args.out, 'w', encoding='utf-8') as f:
-        f.write('<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE tv SYSTEM "xmltv.dtd">\n')
-        f.write('<tv source-info-name="hermes-epg-pipeline" generator-info-name="hermes-epg">\n')
-        for name, (dn, icon) in out_chans.items():
-            f.write(f'  <channel id={quoteattr(name)}>\n')
-            f.write(f'    <display-name>{escape(dn or name)}</display-name>\n')
+    # dedupe programmes by (start, channel) to avoid double entries on re-run
+    total = 0
+    with gzip.open(args.out, 'wt', encoding='utf-8') if args.out.endswith('.gz') \
+            else open(args.out, 'w', encoding='utf-8') as f:
+        f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
+        f.write('<!DOCTYPE tv SYSTEM "xmltv.dtd">\n')
+        f.write('<tv generator-info-name="hermes-epg-pipeline" '
+                'source-info-name="merged: pk + iptv-org + epgshare01 + epg.pw + provider">\n')
+        for cid, (dns, icon) in out_chans.items():
+            f.write(f'  <channel id={quoteattr(cid)}>\n')
+            for dn in dns:
+                f.write(f'    <display-name>{escape(dn)}</display-name>\n')
             if icon:
                 f.write(f'    <icon src={quoteattr(icon)}/>\n')
             f.write('  </channel>\n')
-        for name, plist in out_progs.items():
+        seen = set()
+        for cid, plist in out_progs.items():
             for (st, sp, ti, de, ca) in plist:
-                f.write(fmt_prog(st, sp, name, ti, de, ca))
+                key = (norm_time(st), cid)
+                if key in seen:
+                    continue
+                seen.add(key)
+                f.write(f'  <programme start={quoteattr(norm_time(st))} '
+                        f'stop={quoteattr(norm_time(sp))} channel={quoteattr(cid)}>\n')
+                f.write(f'    <title lang="en">{escape(ti)}</title>\n')
+                if de:
+                    f.write(f'    <desc lang="en">{escape(de[:500])}</desc>\n')
+                if ca:
+                    f.write(f'    <category lang="en">{escape(ca)}</category>\n')
+                f.write('  </programme>\n')
+                total += 1
         f.write('</tv>\n')
 
-    print(f'[done] channels: {len(out_chans)} | programmes: {total} | layers: {dict(used)}')
+    print(f'[done] channels: {len(out_chans)} | programmes: {total} | per-source: {dict(used)}')
+
+    if args.coverage_out:
+        linear = [s for s in streams if not is_non_linear(s.get('cat_name', ''))]
+        linear_names = {s['name'] for s in linear}
+        cov = {
+            'total_streams': len(streams),
+            'linear_streams': len(linear),
+            'linear_unique_names': len(linear_names),
+            'covered_channels': len(out_chans),
+            'programmes': total,
+            'per_source': dict(used),
+            'no_data': dict(no_data),
+        }
+        json.dump(cov, open(args.coverage_out, 'w'), indent=1)
+        denom = max(1, cov['linear_unique_names'])
+        print(f'[coverage] {cov["covered_channels"]}/{denom} linear unique names covered '
+              f'({100*cov["covered_channels"]/denom:.1f}%)')
 
 
 if __name__ == '__main__':

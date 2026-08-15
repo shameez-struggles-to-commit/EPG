@@ -16,7 +16,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -33,111 +33,112 @@ jobs:
           git clone --depth 1 https://github.com/iptv-org/epg.git /tmp/iptv-org-epg
           cd /tmp/iptv-org-epg && npm install --no-audit --no-fund
 
-      - name: Fetch provider data
+      - name: Fetch provider data (Xtream)
         env:
           IPTV_SERVER: ${{ secrets.IPTV_SERVER }}
           IPTV_USER: ${{ secrets.IPTV_USER }}
           IPTV_PASS: ${{ secrets.IPTV_PASS }}
         run: python3 pipeline/fetch_provider.py ./data
 
-      - name: Run PK scrapers
+      - name: Run PK scrapers (Pakistan)
         run: python3 scrapers/pk_scrapers.py ./data/pk_epg.json
 
-      - name: Run iptv-org grabber (India)
+      - name: Run iptv-org grabber (India, per-site to avoid id collisions)
         run: |
           cd /tmp/iptv-org-epg
-          npm run grab --- --sites=jiotv.com,tataplay.com,dishtv.in,airtelxstream.in,zee5.com \
-            --maxConnections=5 --output=/tmp/io_india.xml
-          cp /tmp/io_india.xml ${{ github.workspace }}/data/io_india.xml
+          npm run grab --- --sites=jiotv.com --maxConnections=4 --output=$GITHUB_WORKSPACE/data/io_jiotv.xml &
+          npm run grab --- --sites=tataplay.com --maxConnections=4 --output=$GITHUB_WORKSPACE/data/io_tataplay.xml &
+          npm run grab --- --sites=dishtv.in --maxConnections=4 --output=$GITHUB_WORKSPACE/data/io_dishtv.xml &
+          npm run grab --- --sites=airtelxstream.in --maxConnections=4 --output=$GITHUB_WORKSPACE/data/io_airtel.xml &
+          npm run grab --- --sites=zee5.com --maxConnections=4 --output=$GITHUB_WORKSPACE/data/io_zee5.xml &
+          wait
+          ls -la $GITHUB_WORKSPACE/data/io_*.xml
 
-      - name: Download epg.pw global feed
-        run: |
-          curl -sL -A "Mozilla/5.0" "https://epg.pw/xmltv/epg.xml.gz" -o ./data/epgpw_global.xml.gz
-          ls -la ./data/epgpw_global.xml.gz
+      - name: Download epg.pw + epgshare01 + index sources
+        env:
+          IPTV_ORG_FILES: "data/io_jiotv.xml,data/io_tataplay.xml,data/io_dishtv.xml,data/io_airtel.xml,data/io_zee5.xml"
+        run: python3 pipeline/fetch_sources.py ./data
 
-      - name: Build epg.pw index
+      - name: Build mapping (fallback cascade + country gating + call signs)
         run: |
-          python3 -c "
-          import gzip, re, json
-          d = gzip.open('./data/epgpw_global.xml.gz','rt',errors='ignore').read()
-          disp = dict(re.findall(r'<channel id=\"([^\"]+)\">\s*<display-name lang=\"[^\"]*\">([^<]+)</display-name>', d))
-          json.dump({'disp': disp}, open('./data/epgpw_index.json', 'w'))
-          print(f'Indexed {len(disp)} channels')
-          "
-
-      - name: Fetch iptv-org database
-        run: |
-          curl -sL "https://raw.githubusercontent.com/iptv-org/database/master/data/channels.csv" -o ./data/channels.csv
-
-      - name: Build provider index
-        run: |
-          python3 -c "
-          import re, json
-          from collections import defaultdict
-          d = open('./data/provider.xml', errors='ignore').read()
-          chan_re = re.compile(r'<channel id=\"([^\"]*)\">\s*<display-name>([^<]*)</display-name>', re.S)
-          chans = {m.group(1): m.group(2) for m in chan_re.finditer(d)}
-          prefs = set(re.findall(r'<programme[^>]*?channel=\"([^\"]*)\"', d))
-          names = sorted({chans[c] for c in prefs if c in chans and chans[c].strip()})
-          ids = {c: chans[c] for c in prefs if c in chans}
-          json.dump({'names_with_progs': names, 'ids': ids}, open('./data/provider_index.json', 'w'))
-          print(f'Provider index: {len(names)} names')
-          "
-
-      - name: Build mapping
-        run: |
-          cd pipeline
-          python3 build_mapping.py \
-            --streams ../data/streams.json \
-            --pw-index ../data/epgpw_index.json \
-            --iptvorg ../data/channels.csv \
-            --pk ../data/pk_epg.json \
-            --provider-index ../data/provider_index.json \
-            -o ../data/mapping.json
+          python3 pipeline/build_mapping.py \
+            --streams data/streams.json \
+            --sources-index data/sources_index.json \
+            --provider-index data/provider_index.json \
+            --callsigns data/call_signs.json \
+            -o data/mapping.json
 
       - name: Build final guide
         run: |
-          cd pipeline
-          python3 build_pipeline.py \
-            --streams ../data/streams.json \
-            --mapping ../data/mapping.json \
-            --pw ../data/epgpw_global.xml.gz \
-            --io ../data/io_india.xml \
-            --provider ../data/provider.xml \
-            --pk ../data/pk_epg.json \
-            --out ../public/guide.xml.gz
+          python3 pipeline/build_pipeline.py \
+            --streams data/streams.json \
+            --mapping data/mapping.json \
+            --sources data/sources.json \
+            --provider data/provider.xml \
+            --pk data/pk_epg.json \
+            --out public/guide.xml.gz \
+            --coverage-out data/coverage.json
 
       - name: Validate XMLTV
         run: |
           python3 -c "
           import gzip, xml.dom.minidom, re
-          d = gzip.open('public/guide.xml.gz', 'rt', errors='ignore').read()
+          d = gzip.open('public/guide.xml.gz','rt',errors='ignore').read()
           xml.dom.minidom.parseString(d)
           chans = len(re.findall(r'<channel ', d))
           progs = len(re.findall(r'<programme', d))
           print(f'XMLTV VALID: {chans} channels, {progs} programmes')
-          if chans < 100 or progs < 1000:
+          if chans < 1500 or progs < 100000:
               raise SystemExit('Coverage too low — aborting deploy')
           "
 
-      - name: Generate coverage report
+      - name: Generate coverage report + drop alert
+        env:
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
         run: |
-          python3 -c "
-          import gzip, re, json
-          d = gzip.open('public/guide.xml.gz', 'rt', errors='ignore').read()
-          streams = json.load(open('data/streams.json'))
-          guide_chans = set(re.findall(r'<channel id=\"([^\"]*)\"', d))
-          total = len(streams)
-          covered = sum(1 for s in streams if s['name'] in guide_chans)
-          pct = 100 * covered / total
-          report = f'EPG Coverage Report\n'
-          report += f'===================\n'
-          report += f'Total channels: {total}\n'
-          report += f'Channels with EPG: {covered} ({pct:.1f}%)\n'
-          report += f'Programmes: {len(re.findall(chr(60)+chr(112)+chr(114)+chr(111)+chr(103), d))}\n'
-          open('public/coverage.txt', 'w').write(report)
+          python3 - <<'PYEOF'
+          import gzip, json, re, os, subprocess
+          d = gzip.open('public/guide.xml.gz','rt',errors='ignore').read()
+          new_chans = len(re.findall(r'<channel ', d))
+          new_progs = len(re.findall(r'<programme', d))
+          cov = json.load(open('data/coverage.json'))
+          report = (
+              f"EPG Coverage Report\n"
+              f"===================\n"
+              f"Linear channels covered: {cov['covered_channels']} / {cov['linear_unique_names']}\n"
+              f"Channels in guide: {new_chans}\n"
+              f"Programmes: {new_progs}\n"
+              f"Linear stream entries: {cov['linear_streams']} / {cov['total_streams']} total\n"
+              f"Per-source: {json.dumps(cov['per_source'], sort_keys=True)}\n"
+          )
+          open('public/coverage.txt','w').write(report)
           print(report)
-          "
+
+          # coverage-drop detection vs the currently deployed guide
+          url = "https://shameez-struggles-to-commit.github.io/EPG/guide.xml.gz"
+          try:
+              prev = subprocess.run(['curl','-sL','-A','Mozilla/5.0',url],
+                                    capture_output=True, text=True, timeout=120).stdout
+              import gzip as gz, io
+              prev_chans = len(re.findall(r'<channel ', gz.open(io.BytesIO(prev.encode('latin1','ignore')),'rt',errors='ignore').read())) if prev else 0
+          except Exception:
+              prev_chans = 0
+          drop = prev_chans and new_chans < prev_chans * 0.90
+          print(f'deployed channels: {prev_chans}, new: {new_chans}, drop={drop}')
+          open(os.environ.get('GITHUB_ENV','/dev/null'),'a').write(f'COVERAGE_DROP={"1" if drop else "0"}\n')
+          open(os.environ.get('GITHUB_ENV','/dev/null'),'a').write(f'NEW_CHANS={new_chans}\n')
+          PYEOF
+
+      - name: Notify coverage drop
+        if: env.COVERAGE_DROP == '1'
+        env:
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+        run: |
+          curl -s -H "Authorization: Bearer $NTFY_TOKEN" \
+            -d "⚠️ EPG coverage dropped: deployed had more channels than today's build ($NEW_CHANS new). Check the pipeline." \
+            "$NTFY_URL/hermes-shameez-a7f9c2" || true
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -163,11 +164,8 @@ jobs:
     if: github.event_name == 'schedule'
     needs: build
     steps:
-      - uses: actions/checkout@v4
-
       - name: Check deployed guide
         run: |
-          sleep 30
           URL="https://${{ github.repository_owner }}.github.io/EPG/guide.xml.gz"
           STATUS=$(curl -sI -o /dev/null -w "%{http_code}" "$URL")
           SIZE=$(curl -sI -o /dev/null -w "%{size_download}" "$URL")
@@ -175,20 +173,16 @@ jobs:
           echo "Status: $STATUS"
           echo "Size: $SIZE bytes"
 
-      - name: Weekly ntfy health ping
-        if: github.run_attempt == 1 && (github.event.schedule == '0 4 * * 0' || true)
+      - name: Daily health ping (ntfy)
+        if: github.run_attempt == 1
         env:
           NTFY_URL: ${{ secrets.NTFY_URL }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
         run: |
-          # weekly only: Sunday run
-          DOW=$(date -u +%u)
-          if [ "$DOW" = "7" ]; then
-            URL="https://${{ github.repository_owner }}.github.io/EPG/guide.xml.gz"
-            STATUS=$(curl -sI -o /dev/null -w "%{http_code}" "$URL")
-            SIZE=$(curl -sI -o /dev/null -w "%{size_download}" "$URL")
-            curl -s -H "Authorization: Bearer $NTFY_TOKEN" \
-              -d "EPG Pipeline Weekly Health: guide.xml.gz HTTP $STATUS, ${SIZE} bytes — $(date -u)" \
-              "$NTFY_URL/hermes-shameez-a7f9c2" || true
-            echo "ntfy ping sent"
-          fi
+          URL="https://${{ github.repository_owner }}.github.io/EPG/guide.xml.gz"
+          STATUS=$(curl -sI -o /dev/null -w "%{http_code}" "$URL")
+          SIZE=$(curl -sI -o /dev/null -w "%{size_download}" "$URL")
+          curl -s -H "Authorization: Bearer $NTFY_TOKEN" \
+            -d "EPG Pipeline: guide.xml.gz HTTP $STATUS, ${SIZE} bytes — $(date -u)" \
+            "$NTFY_URL/hermes-shameez-a7f9c2" || true
+          echo "ntfy ping sent"
