@@ -48,7 +48,6 @@ PK_OVERRIDES = {
     'Hum TV Europe': 'hum_tv_europe_pk',
     'ARY Digital Asia': 'ary_digital_pk',
     'Express Entertainment': 'express_entertainment_pk',
-    'ARY Zindagi': 'ary_zindagi_pk',   # headless scraper (JS-rendered site)
 }
 
 # Curated aliases: provider channel name -> source display-name that has live
@@ -124,6 +123,73 @@ FETCHER_COUNTRIES = {
     'epgone': {'UA'},
     'bein': {'QA', 'AE', 'SA', 'MA', 'EG'},
 }
+
+# iptv-org site -> countries it may serve. FIXES the old blanket
+# "iptv-org = India only" gate which silently hid ALL non-India grabber
+# outputs from their own countries' streams (found in the 2026-08-15
+# matching audit: Orange Sport RO, Cablenet CY, TV4 Motor SE, OCS/Moselle FR,
+# DE regional channels etc. all existed in grabs but were gated away).
+# Sites not listed here fall back to IN-only (conservative; the five India
+# grab sites dominate that list).
+IPTV_ORG_COUNTRIES = {
+    'jiotv': {'IN'}, 'tataplay': {'IN'}, 'dishtv': {'IN'},
+    'airtelxstream': {'IN'}, 'zee5': {'IN'},
+    'epg.112114.xyz': {'IN'},
+    'tvpassport.com': {'US', 'CA', 'MX'},
+    'tv24.co.uk': {'UK', 'IE'},
+    'tvireland.ie': {'IE', 'UK'},
+    'programtv.onet.pl': {'PL'},
+    'www.magenta.tv': {'DE'}, 'web.magentatv.de': {'DE'},
+    'tv.blue.ch': {'CH', 'DE', 'FR', 'IT', 'AT'},
+    'abc.net.au': {'AU'}, 'foxtel.com.au': {'AU'},
+    'tvhebdo.com': {'CA'},
+    'programetv.ro': {'RO'},
+    'programacion-tv.elpais.com': {'ES'}, 'movistarplus.es': {'ES'},
+    'programme-tv.net': {'FR'}, 'tvcesoir.fr': {'FR'},
+    'meo.pt': {'PT'},
+    'guidatv.sky.it': {'IT'},
+    'cosmotetv.gr': {'GR'},
+    'cyta.com.cy': {'CY'},
+    'allente.se': {'SE'},
+    'gigatv.3bbtv.co.th': {'TH'},
+    'tvinsider.com': {'US', 'CA'},
+    'dstv.com': {'ZA', 'KE', 'NG', 'GH', 'UG', 'TZ', 'MZ', 'ZW', 'ZM'},
+}
+
+
+def iptv_org_allowed(src, cc):
+    """True if the iptv-org site may serve a stream of country cc."""
+    site = src.split(':', 1)[1] if ':' in src else src
+    countries = IPTV_ORG_COUNTRIES.get(site, {'IN'})  # default: India-only
+    return cc is None or cc in countries
+
+
+# Diaspora EXACT-match sources: Pakistani/Bangladeshi/Indian channels are
+# carried on UK/US/EU satellite + DTH lineups (Samaa on UK Sky, ARY Musik on
+# US TVPassport, Channel i on Indian feeds...). EXACT norm matches only —
+# namesakes exist (Filmax is PL, KTN is KE, See TV is DK) so fuzzy is never
+# allowed through this path. 2026-08-15 matching audit.
+DIASPORA_EXACT = {
+    'PK': ['epgshare01:UK1', 'epgshare01:IE1', 'epgshare01:US2',
+           'epgshare01:AE1', 'epgshare01:IN1',
+           'epgshare01:IN4', 'tvepg', 'iptv-org:tvpassport.com',
+           'iptv-org:tv24.co.uk', 'iptv-org:tvireland.ie',
+           'iptv-org:allente.se'],
+    # NOTE: meo.pt excluded (Venus.ar = Arabic Venus, not PK Venus) and
+    # AL1 excluded (ATV.al = Albanian ATV, not PK ATV) — single-word
+    # namesake false positives found in the 2026-08-15 audit.
+    'IN': ['epgshare01:AE1', 'epgshare01:UK1', 'iptv-org:tvpassport.com',
+           'iptv-org:tv24.co.uk'],
+    'BD': ['epgshare01:IN1', 'epgshare01:IN4', 'tvepg', 'epgshare01:UK1',
+           'iptv-org:tvpassport.com', 'iptv-org:tv24.co.uk'],
+}
+
+
+def diaspora_allowed(src, cc):
+    """Exact-match-only: is this source a diaspora carrier for country cc?"""
+    if not cc:
+        return False
+    return src in DIASPORA_EXACT.get(cc, [])
 
 
 def is_real_epg_id(v):
@@ -236,7 +302,7 @@ def main():
                     continue
                 if src in FETCHER_COUNTRIES and cc and cc not in FETCHER_COUNTRIES[src]:
                     continue
-                if src.startswith('iptv-org') and cc and cc != 'IN':
+                if src.startswith('iptv-org') and not iptv_org_allowed(src, cc):
                     continue
                 if src == 'tvepg' and cc and cc != 'IN':
                     continue
@@ -253,20 +319,37 @@ def main():
             stats['callsign'] += 1
 
         # 2. name-based sources, exact (country-gated for epgshare01 /
-        #    dedicated fetchers / iptv-org / tvepg)
+        #    dedicated fetchers / iptv-org / tvepg; diaspora-exact fallback)
         for src in name_sources:
             if src.startswith('epgshare01') and src not in allowed_eshare:
-                continue
+                if not diaspora_allowed(src, cc):
+                    continue
             if src in FETCHER_COUNTRIES and cc and cc not in FETCHER_COUNTRIES[src]:
                 continue
-            if src.startswith('iptv-org') and cc and cc != 'IN':
-                continue
+            if src.startswith('iptv-org') and not iptv_org_allowed(src, cc):
+                if not diaspora_allowed(src, cc):
+                    continue
             if src == 'tvepg' and cc and cc != 'IN':
-                continue
+                if not diaspora_allowed(src, cc):
+                    continue
             eids = src_idx[src].exact(name)
             if eids:
-                cands.append((src_tier(src), src, eids[0], 'exact', 1.0))
-                stats[f'{src}:exact'] += 1
+                # classify: 'exact' if the source is allowed for this stream
+                # through its normal gating, else 'diaspora' (exact-match
+                # fallback to a foreign lineup that carries the channel)
+                if src.startswith('epgshare01'):
+                    normal = src in allowed_eshare
+                elif src in FETCHER_COUNTRIES:
+                    normal = cc is None or cc in FETCHER_COUNTRIES[src]
+                elif src.startswith('iptv-org'):
+                    normal = iptv_org_allowed(src, cc)
+                elif src == 'tvepg':
+                    normal = cc is None or cc == 'IN'
+                else:
+                    normal = True
+                method = 'exact' if normal else 'diaspora'
+                cands.append((src_tier(src), src, eids[0], method, 0.99))
+                stats[f'{src}:{method}'] += 1
 
         # 3. provider (epg_channel_id then display-name)
         if is_real_epg_id(s.get('epg_channel_id')):
@@ -285,7 +368,7 @@ def main():
                 continue
             if src in FETCHER_COUNTRIES and cc and cc not in FETCHER_COUNTRIES[src]:
                 continue
-            if src.startswith('iptv-org') and cc and cc != 'IN':
+            if src.startswith('iptv-org') and not iptv_org_allowed(src, cc):
                 continue
             if src == 'tvepg' and cc and cc != 'IN':
                 continue

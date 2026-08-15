@@ -43,26 +43,6 @@ jobs:
       - name: Run PK scrapers (Pakistan)
         run: python3 scrapers/pk_scrapers.py ./data/pk_epg.json || echo "PK scraper(s) failed — see alert step"
 
-      - name: Install Playwright + Chromium (headless PK scrapers)
-        run: |
-          python3 -m venv /tmp/pw-venv
-          /tmp/pw-venv/bin/pip install --quiet playwright
-          /tmp/pw-venv/bin/python -m playwright install chromium
-          echo "/tmp/pw-venv/bin" >> $GITHUB_PATH
-
-      - name: Run headless PK scrapers (ARY Zindagi)
-        run: |
-          python3 scrapers/pk_headless.py ./data/pk_headless.json || echo "headless PK scraper failed"
-          # merge headless results into the main PK file
-          python3 - <<'PYEOF'
-          import json
-          a = json.load(open('data/pk_epg.json'))
-          b = json.load(open('data/pk_headless.json'))
-          a.update(b)
-          json.dump(a, open('data/pk_epg.json', 'w'), indent=1)
-          print('merged pk_epg.json:', {c: len(v) for c, v in a.items()})
-          PYEOF
-
       - name: Alert on PK scraper failure (no-LLM)
         env:
           NTFY_URL: ${{ secrets.NTFY_URL }}
