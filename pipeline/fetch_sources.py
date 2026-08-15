@@ -60,9 +60,9 @@ ESHARE_FILES = [
     'CA2',
     'DE1', 'FR1', 'IT1', 'GR1', 'RO1', 'RO2', 'ES1', 'PL1', 'PT1',
     'AU1', 'ZA1',
-    'PH1', 'PH2', 'DK1', 'TR1', 'TR3', 'TH1',
+    'PH2', 'DK1', 'TR1', 'TR3', 'TH1',
     'SE1', 'NL1', 'NO1', 'FI1', 'CY1', 'NZ1', 'BR1', 'BR2', 'CZ1',
-    'IN1', 'IN2', 'PK1',
+    'IN1', 'IN2',
 ]
 
 
