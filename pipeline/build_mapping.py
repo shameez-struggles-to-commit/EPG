@@ -77,7 +77,7 @@ COUNTRY_SOURCES = {
     'DK': ['DK1'], 'TR': ['TR1', 'TR3'], 'TH': ['TH1'],
     'SE': ['SE1'], 'NL': ['NL1'], 'NO': ['NO1'], 'FI': ['FI1'],
     'CY': ['CY1'], 'NZ': ['NZ1'], 'BR': ['BR1', 'BR2'], 'CZ': ['CZ1'],
-    'IN': ['IN1', 'IN2', 'IN4'], 'PK': ['PK1'],
+    'IN': ['IN1', 'IN2'],
 }
 
 

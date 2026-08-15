@@ -34,9 +34,11 @@ EPG_PW_URL = 'https://epg.pw/xmltv/epg.xml.gz'
 ESHARE_BASE = 'https://epgshare01.online/epgshare01/epg_ripper_{}.xml.gz'
 # mitthu786/tvepg — India OTT EPG (JioTV/TataPlay/Zee5/SonyLIV/SunNXT), one AIO file
 TVEPG_URL = 'https://raw.githubusercontent.com/mitthu786/tvepg/main/epg.xml.gz'
-# globetvapp/epg — free country XMLTV on GitHub (country dir capitalized, file lowercase)
+# globetvapp/epg — free country XMLTV on GitHub (country dir capitalized, file lowercase).
+# Only india2 has clean programme data (635/659 channels); india1/3/4/5 are
+# mostly orphaned programme refs or empty listings, so they're excluded.
 GLOBETV_BASE = 'https://raw.githubusercontent.com/globetvapp/epg/main/{}/{}'
-GLOBETV_FILES = {'india': 5}  # country -> number of numbered .xml.gz files
+GLOBETV_FILES = {'india': [2]}  # country -> list of file indices
 
 # Channel parsing (robust: icon/url may precede display-name).
 CHAN_BLOCK_RE = re.compile(r'<channel\s+id="(?P<id>[^"]*)"[^>]*>(?P<body>.*?)</channel>', re.S)
@@ -149,9 +151,9 @@ def main():
         print(f'[tvepg] FAILED: {e}', file=sys.stderr)
 
     # globetvapp/epg country files
-    for country, nfiles in GLOBETV_FILES.items():
+    for country, indices in GLOBETV_FILES.items():
         cdir = country.capitalize()
-        for i in range(1, nfiles + 1):
+        for i in indices:
             dest = os.path.join(outdir, f'globetv_{country}{i}.xml.gz')
             url = GLOBETV_BASE.format(cdir, f'{country}{i}.xml.gz')
             try:
