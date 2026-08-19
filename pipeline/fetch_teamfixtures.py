@@ -60,6 +60,9 @@ SDB_LEAGUES = {
 LEAGUE_BY_CATEGORY = {
     'EPL': 'EPL', 'PREMIER LEAGUE': 'EPL',
     'NFL': 'NFL',
+    'NBA': 'NBA',
+    'NHL': 'NHL',
+    'MLB': 'MLB',
     'SCOTTISH': 'SPFL', 'SPFL': 'SPFL',
     'SERIE A': 'SerieA',
     'LALIGA': 'LaLiga', 'LA LIGA': 'LaLiga',
@@ -147,6 +150,37 @@ def nhl_day_games(date_str):
             if gd:
                 out.append((home, away, gd))
     out.sort(key=lambda x: x[2])
+    return out
+
+
+NBA_SCHEDULE_URL = ('https://data.nba.com/data/5s/v2015/json/mobile_teams/'
+                    'nba/{season}/league/00_full_schedule.json')
+
+
+def nba_full_season(season_start_year):
+    """Full NBA season schedule (1,271 games) from data.nba.com.
+    Requires a browser User-Agent (Akamai blocks bare urllib/curl)."""
+    url = NBA_SCHEDULE_URL.format(season=season_start_year)
+    req = urllib.request.Request(url, headers={**UA_H,
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+                      'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            j = json.loads(r.read().decode('utf-8', 'ignore'))
+    except Exception as e:  # noqa: BLE001
+        print(f'[teams] NBA full schedule failed: {e}', file=sys.stderr)
+        return []
+    out = []
+    for month in j.get('lscd', []):
+        for g in month.get('mscd', {}).get('g', []):
+            gd = g.get('gdtutc', '')
+            tm = g.get('utctm', '')
+            if not gd:
+                continue
+            home = g.get('h', {}).get('tn', '?')
+            away = g.get('v', {}).get('tn', '?')
+            iso = f'{gd}T{tm[11:]}' if len(tm) >= 19 else f'{gd}T00:00:00Z'
+            out.append((home, away, iso))
     return out
 
 
@@ -252,8 +286,20 @@ def main():
     # For MLB/NHL numbered slots: fetch per-day games for the next 3 days.
     # Slot N = the Nth game of the day (ordered by start time).
     slot_games = {}  # (league, date_str) -> [(home, away, start_iso)]
-    for league in ('MLB', 'NHL'):
+    for league in ('MLB', 'NHL', 'NBA'):
         if not any(c.get('slot') is not None and c['league'] == league for c in chans):
+            continue
+        if league == 'NBA':
+            # NBA: one full-season JSON (1,271 games) — no rate limit, no pagination
+            games = nba_full_season(2025)  # 2025 = 2025-26 season; bump in Oct
+            today = dt.date.today().isoformat()
+            games = [(h, a, iso) for h, a, iso in games if iso[:10] >= today]
+            print(f'[teams] NBA full season: {len(games)} upcoming games')
+            for d in range(3):
+                day = (dt.date.today() + dt.timedelta(days=d)).isoformat()
+                day_games = [(h, a, iso) for h, a, iso in games if iso[:10] == day]
+                slot_games[('NBA', day)] = day_games
+                print(f'[teams] NBA slots {day}: {len(day_games)} games')
             continue
         for d in range(3):
             day = (dt.date.today() + dt.timedelta(days=d)).isoformat()
