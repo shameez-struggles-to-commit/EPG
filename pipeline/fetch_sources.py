@@ -45,6 +45,19 @@ ESHARE_BASE = 'https://epgshare01.online/epgshare01/epg_ripper_{}.xml.gz'
 TVEPG_URL = 'https://raw.githubusercontent.com/mitthu786/tvepg/main/epg.xml.gz'
 # al7omed/bein-epg — beIN MENA sports, self-updating via GitHub Actions
 BEIN_URL = 'https://raw.githubusercontent.com/al7omed/bein-epg/main/docs/guide.xml'
+# Shadow-GR-Official/cyta.cy-epg — Cyprus CyTA platform incl. the NOVA bouquet
+# (Novacinema 1-4, Novasports Start/Prime/1-6/Extra, Novalife). Verified
+# 2026-08-19: 118/118 usable, current. Net-new vs the iptv-org cyta grabber
+# (which yields only ~7 channels).
+CYTA_URL = 'https://raw.githubusercontent.com/Shadow-GR-Official/cyta.cy-epg/refs/heads/main/data/epg.xml'
+# chrisliatas/greek-xmltv — Digea DTT (all regions) + ERT, daily GitHub
+# release. Verified 2026-08-19: 101/101 usable, current. Greek-script names
+# (matcher handles via gr_translit in build_mapping epilogue).
+GREEK_URL = 'https://github.com/chrisliatas/greek-xmltv/releases/latest/download/xmltv_GREECE_el.xml.gz'
+# i.mjh.nz PlutoTV US — FAST loop channels (24/7 family): ~15 of our 24/7
+# streams have real episode schedules here (CSI Miami, Frasier, ...).
+# Exact-name matching only, gated to 24/7-category streams (source 'plutofast').
+PLUTOFAST_URL = 'https://i.mjh.nz/PlutoTV/us.xml.gz'
 
 # Channel parsing (robust: icon/url may precede display-name).
 CHAN_BLOCK_RE = re.compile(r'<channel\s+id="(?P<id>[^"]*)"[^>]*>(?P<body>.*?)</channel>', re.S)
@@ -118,21 +131,42 @@ def read_xml(path):
     return open(path, 'r', errors='ignore').read()
 
 
-def build_index(path):
+def build_index(path, greek_translit=False):
     """display-name -> [channel_id] index for one XMLTV file.
 
     Robust to channels where <icon>/<url> elements precede <display-name>
     (e.g. epgshare01 US locals use Gracenote imagery + url before the name).
     Display-names are HTML-unescaped so '&amp;pictures' indexes as
     '&pictures' (norm 'pictures') and matches the provider's '& pictures'.
+    greek_translit=True (chrisliatas pack) also adds a Latin-transliterated
+    entry for Greek-script names so Latin queries can hit them.
     """
     txt = read_xml(path)
     idx = SourceIndex()
     for m in CHAN_BLOCK_RE.finditer(txt):
         dn = DN_RE.search(m.group('body'))
         if dn:
-            idx.add(html.unescape(dn.group(1)), m.group('id'))
+            name = html.unescape(dn.group(1))
+            idx.add(name, m.group('id'))
+            if greek_translit:
+                lat = _gr_translit(name)
+                if lat != name:
+                    idx.add(lat, m.group('id'))
     return idx
+
+
+GR2LAT = {
+    'α': 'a', 'β': 'v', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z', 'η': 'i',
+    'θ': 'th', 'ι': 'i', 'κ': 'k', 'λ': 'l', 'μ': 'm', 'ν': 'n', 'ξ': 'x',
+    'ο': 'o', 'π': 'p', 'ρ': 'r', 'σ': 's', 'ς': 's', 'τ': 't', 'υ': 'y',
+    'φ': 'f', 'χ': 'ch', 'ψ': 'ps', 'ω': 'o',
+    'ά': 'a', 'έ': 'e', 'ί': 'i', 'ό': 'o', 'ύ': 'y', 'ή': 'i', 'ώ': 'o',
+    'ΐ': 'i', 'ΰ': 'y', 'ϊ': 'i', 'ϋ': 'y',
+}
+
+
+def _gr_translit(s):
+    return ''.join(GR2LAT.get(c, c) for c in (s or '').lower())
 
 
 def build_callsign_index(path):
@@ -194,6 +228,42 @@ def main():
     except Exception as e:  # noqa: BLE001
         print(f'[bein] FAILED: {e}', file=sys.stderr)
 
+    # CyTA Cyprus pack (NOVA bouquet + Cypriot linears)
+    cyta_path = os.path.join(outdir, 'cyta_pack.xml')
+    try:
+        n = download(CYTA_URL, cyta_path)
+        print(f'[cyta] {n} bytes')
+        manifest.append({'source': 'cyta', 'file': os.path.abspath(cyta_path), 'kind': 'name'})
+    except Exception as e:  # noqa: BLE001
+        print(f'[cyta] FAILED: {e}', file=sys.stderr)
+
+    # chrisliatas/greek-xmltv (Digea DTT + ERT, daily release)
+    greek_path = os.path.join(outdir, 'greek_pack.xml.gz')
+    try:
+        n = download(GREEK_URL, greek_path)
+        print(f'[greek] {n} bytes')
+        manifest.append({'source': 'greek', 'file': os.path.abspath(greek_path), 'kind': 'name'})
+    except Exception as e:  # noqa: BLE001
+        print(f'[greek] FAILED: {e}', file=sys.stderr)
+
+    # i.mjh.nz PlutoTV US (FAST 24/7 loop channels)
+    pluto_path = os.path.join(outdir, 'plutofast.xml.gz')
+    try:
+        n = download(PLUTOFAST_URL, pluto_path)
+        print(f'[plutofast] {n} bytes')
+        manifest.append({'source': 'plutofast', 'file': os.path.abspath(pluto_path), 'kind': 'name'})
+    except Exception as e:  # noqa: BLE001
+        print(f'[plutofast] FAILED: {e}', file=sys.stderr)
+
+    # dedicated fetcher outputs (generated earlier by the workflow step):
+    #   ALLENTE_FILE / TEAMS_FILE / BBCRADIO_FILE (name-indexed like the others)
+    for env, src in (('ALLENTE_FILE', 'allente'), ('TEAMS_FILE', 'teamfixtures'),
+                     ('BBCRADIO_FILE', 'bbcradio')):
+        f = os.environ.get(env, '').strip()
+        if f and os.path.exists(f):
+            manifest.append({'source': src, 'file': os.path.abspath(f), 'kind': 'name'})
+            print(f'[{src}] {os.path.getsize(f)} bytes')
+
     # iptv-org per-site grabs (io_jiotv.xml, io_tataplay.xml, ...) — indexed as
     # separate sources so numeric site_ids can't collide across sites.
     # Entries may override the source name: "name=path" (used when one site's
@@ -234,7 +304,7 @@ def main():
     for m in manifest:
         if m['kind'] == 'name':
             try:
-                idx = build_index(m['file'])
+                idx = build_index(m['file'], greek_translit=(m['source'] == 'greek'))
                 if m['source'] in index:
                     for k, v in idx.by_name.items():
                         index[m['source']].setdefault(k, []).extend(v)

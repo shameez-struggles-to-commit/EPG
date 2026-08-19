@@ -53,6 +53,12 @@ SITES = [
     'epg.112114.xyz',      # IN (AIO mirror)
     'gigatv.3bbtv.co.th',  # TH
     'tvinsider.com',       # US
+    # 2026-08-19 additions (verified live 2-day grabs in the expansion audit)
+    'tv24.se',             # SE/DK/NO (TV2 Danmark, TV4 Sport Live, SkyShowtime)
+    'mujtvprogram.cz',     # CZ/SK
+    'tvmustra.hu',         # HU (incl. Stingray CMusic)
+    'nostv.pt',            # PT
+    'tv.trueid.net',       # TH (17/30 TH gaps; grab via EN channel file)
 ]
 
 # sites that ship REGION-SUFFIXED channels files instead of <site>.channels.xml.
@@ -60,6 +66,7 @@ SITES = [
 REGION_FILES = {
     'abc.net.au': [],            # merge all abc.net.au_* files (AU regional)
     'allente.se': ['_se'],
+    'tv.trueid.net': ['_en'],    # EN-language names (Latin script = matchable)
 }
 
 

@@ -129,12 +129,12 @@ COUNTRY_SOURCES = {
     'US': ['US_LOCALS1', 'US2', 'US_SPORTS1'],
     'UK': ['UK1', 'IE1', 'ASIANTELEVISION1'], 'IE': ['UK1', 'IE1'],
     'CA': ['CA2'], 'DE': ['DE1', 'CH1', 'AT1', 'BE2'], 'FR': ['FR1', 'CH1', 'BE2'],
-    'IT': ['IT1', 'CH1', 'MT1'], 'GR': ['GR1'], 'RO': ['RO1', 'RO2', 'HU1'],
-    'ES': ['ES1'], 'PL': ['PL1'], 'PT': ['PT1'],
+    'IT': ['IT1', 'CH1', 'MT1'], 'GR': ['GR1', 'CY1'], 'RO': ['RO1', 'RO2', 'HU1', 'DK1', 'ES1'],
+    'ES': ['ES1', 'DK1'], 'PL': ['PL1', 'CZ1'], 'PT': ['PT1', 'GR1', 'PL1'],
     'AU': ['AU1'], 'ZA': ['ZA1', 'AL1'], 'PH': ['PH2'],
     'DK': ['DK1'], 'TR': ['TR1', 'TR3'], 'TH': ['TH1'],
     'SE': ['SE1'], 'NL': ['NL1', 'BE2'], 'NO': ['NO1'], 'FI': ['FI1'],
-    'CY': ['CY1'], 'NZ': ['NZ1'], 'BR': ['BR1', 'BR2'], 'CZ': ['CZ1', 'SK1', 'HU1'],
+    'CY': ['CY1', 'GR1', 'TR1', 'TR3'], 'NZ': ['NZ1'], 'BR': ['BR1', 'BR2'], 'CZ': ['CZ1', 'SK1', 'HU1'],
     'IN': ['IN1', 'IN2', 'IN4'],
     'AE': ['AE1'], 'SA': ['AE1', 'SA2', 'BEIN1'], 'MA': ['AE1'],
     'QA': ['AE1', 'BEIN1'], 'EG': ['AE1'],
@@ -149,8 +149,14 @@ COUNTRY_SOURCES = {
 FETCHER_COUNTRIES = {
     'skyhawk': {'UK', 'IE', 'DE', 'AT', 'CH', 'IT', 'IN', 'PK', 'BD'},
     'dstv': {'ZA'},
-    'epgone': {'UA'},
+    'epgone': {'UA', 'MD', 'RO'},
     'bein': {'QA', 'AE', 'SA', 'MA', 'EG'},
+    'allente': {'DK', 'NO', 'FI', 'SE'},
+    'cyta': {'CY', 'GR'},
+    'greek': {'GR'},
+    'plutofast': {'US', 'UK', 'CA', 'AU', 'DE', 'IN'},  # FAST loop channels (24/7 family)
+    'teamfixtures': {'US', 'UK', 'ES', 'IT', 'SC'},    # team-dedicated channels (fixtures)
+    'bbcradio': {'UK', 'IE'},                          # radio (name-matched only)
 }
 
 # iptv-org site -> countries it may serve. FIXES the old blanket
@@ -164,22 +170,26 @@ IPTV_ORG_COUNTRIES = {
     'jiotv': {'IN'}, 'tataplay': {'IN'}, 'dishtv': {'IN'},
     'airtelxstream': {'IN'}, 'zee5': {'IN'},
     'epg.112114.xyz': {'IN'},
-    'tvpassport.com': {'US', 'CA', 'MX'},
-    'tv24.co.uk': {'UK', 'IE'},
+    'tvpassport.com': {'US', 'CA', 'MX', 'DE'},
+    'tv24.co.uk': {'UK', 'IE', 'DE'},
     'tvireland.ie': {'IE', 'UK'},
-    'www.magenta.tv': {'DE'}, 'web.magentatv.de': {'DE'},
-    'tv.blue.ch': {'CH', 'DE', 'FR', 'IT', 'AT'},
+    'www.magenta.tv': {'DE', 'FR'}, 'web.magentatv.de': {'DE', 'FR'},
+    'tv.blue.ch': {'CH', 'DE', 'FR', 'IT', 'AT', 'GR', 'RO'},
     'abc.net.au': {'AU'}, 'foxtel.com.au': {'AU'},
-    'tvhebdo.com': {'CA'},
+    'tvhebdo.com': {'CA', 'FR'},
     'programetv.ro': {'RO'},
     'programacion-tv.elpais.com': {'ES'}, 'movistarplus.es': {'ES'},
     'programme-tv.net': {'FR'}, 'tvcesoir.fr': {'FR'},
-    'meo.pt': {'PT'},
+    'meo.pt': {'PT'}, 'nostv.pt': {'PT'},
     'guidatv.sky.it': {'IT'},
     'cosmotetv.gr': {'GR'},
-    'cyta.com.cy': {'CY'},
+    'cyta.com.cy': {'CY', 'GR'},
     'allente.se': {'SE'},
+    'tv24.se': {'SE', 'DK', 'NO'},
+    'mujtvprogram.cz': {'CZ', 'SK'},
+    'tvmustra.hu': {'HU', 'PT'},
     'gigatv.3bbtv.co.th': {'TH'},
+    'tv.trueid.net': {'TH'},
     'tvinsider.com': {'US', 'CA'},
 }
 
@@ -269,6 +279,28 @@ def epg_q(name):
     fetcher's transliterated display-name. Harmless for pure-Latin names."""
     toks = cyr_to_lat(norm(name)).split()
     return ' '.join(dict.fromkeys(toks))
+
+
+# Greek-script -> Latin transliteration (for the chrisliatas/greek-xmltv pack:
+# display-names are Greek ('ΜΑΚΕΔΟΝΙΑ ΤV') while provider names are Latin
+# ('Makedonia TV'). Applied on BOTH sides of the 'greek' source match.
+GR2LAT = {
+    'α': 'a', 'β': 'v', 'γ': 'g', 'δ': 'd', 'ε': 'e', 'ζ': 'z', 'η': 'i',
+    'θ': 'th', 'ι': 'i', 'κ': 'k', 'λ': 'l', 'μ': 'm', 'ν': 'n', 'ξ': 'x',
+    'ο': 'o', 'π': 'p', 'ρ': 'r', 'σ': 's', 'ς': 's', 'τ': 't', 'υ': 'y',
+    'φ': 'f', 'χ': 'ch', 'ψ': 'ps', 'ω': 'o',
+    'ά': 'a', 'έ': 'e', 'ί': 'i', 'ό': 'o', 'ύ': 'y', 'ή': 'i', 'ώ': 'o',
+    'ΐ': 'i', 'ΰ': 'y', 'ϊ': 'i', 'ϋ': 'y',
+}
+
+
+def gr_translit(s):
+    return ''.join(GR2LAT.get(c, c) for c in (s or '').lower())
+
+
+def greek_q(name):
+    """Query transform for the 'greek' source (Greek pack)."""
+    return norm(gr_translit(name))
 
 
 # ---- US affiliate resolver (2026-08-16) ------------------------------------
@@ -520,7 +552,11 @@ def main():
             if src == 'tvepg' and cc and cc != 'IN':
                 if not diaspora_allowed(src, cc):
                     continue
-            qname = epg_q(name) if src == 'epgone' else name
+            qname = name
+            if src == 'epgone':
+                qname = epg_q(name)
+            elif src == 'greek':
+                qname = greek_q(name)
             eids = src_idx[src].exact(qname)
             if eids:
                 # classify: 'exact' if the source is allowed for this stream
@@ -561,7 +597,11 @@ def main():
                 continue
             if src == 'tvepg' and cc and cc != 'IN':
                 continue
-            fq = epg_q(name) if src == 'epgone' else name
+            fq = name
+            if src == 'epgone':
+                fq = epg_q(name)
+            elif src == 'greek':
+                fq = greek_q(name)
             for sc, cn, cid in src_idx[src].fuzzy(fq, threshold=args.fuzzy_threshold, limit=2):
                 cands.append((50 + src_tier(src), src, cid, 'fuzzy', round(sc, 2)))
                 stats[f'{src}:fuzzy'] += 1

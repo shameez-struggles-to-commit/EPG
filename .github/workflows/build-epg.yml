@@ -91,7 +91,7 @@ jobs:
           # across runner IPs). Polish channels are served by epgshare01 PL1
           # (free, ~22s download, ~150 channels) instead; the user confirmed
           # dropping the official PL source is fine.
-          for site in tvpassport.com tv24.co.uk tvireland.ie www.magenta.tv web.magentatv.de tv.blue.ch abc.net.au foxtel.com.au tvhebdo.com programetv.ro programacion-tv.elpais.com movistarplus.es programme-tv.net tvcesoir.fr meo.pt guidatv.sky.it cosmotetv.gr cyta.com.cy allente.se epg.112114.xyz gigatv.3bbtv.co.th tvinsider.com; do
+          for site in tvpassport.com tv24.co.uk tvireland.ie www.magenta.tv web.magentatv.de tv.blue.ch abc.net.au foxtel.com.au tvhebdo.com programetv.ro programacion-tv.elpais.com movistarplus.es programme-tv.net tvcesoir.fr meo.pt guidatv.sky.it cosmotetv.gr cyta.com.cy allente.se epg.112114.xyz gigatv.3bbtv.co.th tvinsider.com tv24.se mujtvprogram.cz tvmustra.hu nostv.pt tv.trueid.net; do
             CH="$WS/data/io_channels/$site.channels.xml"
             if [ -s "$CH" ]; then
               npx tsx scripts/commands/epg/grab.ts --channels="$CH" --output="$WS/data/io_${site}.xml" --days=2 --timeout=30000 --maxConnections=10 &
@@ -106,7 +106,10 @@ jobs:
           cd "$WS"
           python3 pipeline/fetch_skyhawk.py data/streams.json data/skyhawk.xml --days 2 &
           python3 pipeline/fetch_dstv.py data/dstv.xml --days 2 &
-          (python3 pipeline/fetch_epgone.py data/epgone_ua.xml || echo "epg.one fetch failed (non-fatal: Ukraine bonus source)") &
+          (python3 pipeline/fetch_epgone.py data/epgone_cis.xml data/streams.json || echo "epg.one fetch failed (non-fatal: UA/MD bonus source)") &
+          python3 pipeline/fetch_allente.py data/allente.xml --days 2 &
+          python3 pipeline/fetch_teamfixtures.py data/streams.json data/teamfixtures.xml data/teams_status.json &
+          python3 pipeline/fetch_bbcradio.py data/streams.json data/bbcradio.xml data/bbc_status.json --days 2 &
 
           wait
           echo "=== grab outputs ==="
@@ -115,17 +118,20 @@ jobs:
           python3 - "$WS/data" <<'PYEOF'
           import os, sys
           d = sys.argv[1]
-          expected = 'io_jiotv.xml io_tataplay.xml io_dishtv.xml io_airtel.xml io_zee5.xml io_tvpassport.com.xml io_tv24.co.uk.xml io_tvireland.ie.xml io_www.magenta.tv.xml io_web.magentatv.de.xml io_tv.blue.ch.xml io_abc.net.au.xml io_foxtel.com.au.xml io_tvhebdo.com.xml io_programetv.ro.xml io_programacion-tv.elpais.com.xml io_movistarplus.es.xml io_programme-tv.net.xml io_tvcesoir.fr.xml io_meo.pt.xml io_guidatv.sky.it.xml io_cosmotetv.gr.xml io_cyta.com.cy.xml io_allente.se.xml io_epg.112114.xyz.xml io_gigatv.3bbtv.co.th.xml io_tvinsider.com.xml'.split()
+          expected = 'io_jiotv.xml io_tataplay.xml io_dishtv.xml io_airtel.xml io_zee5.xml io_tvpassport.com.xml io_tv24.co.uk.xml io_tvireland.ie.xml io_www.magenta.tv.xml io_web.magentatv.de.xml io_tv.blue.ch.xml io_abc.net.au.xml io_foxtel.com.au.xml io_tvhebdo.com.xml io_programetv.ro.xml io_programacion-tv.elpais.com.xml io_movistarplus.es.xml io_programme-tv.net.xml io_tvcesoir.fr.xml io_meo.pt.xml io_guidatv.sky.it.xml io_cosmotetv.gr.xml io_cyta.com.cy.xml io_allente.se.xml io_epg.112114.xyz.xml io_gigatv.3bbtv.co.th.xml io_tvinsider.com.xml io_tv24.se.xml io_mujtvprogram.cz.xml io_tvmustra.hu.xml io_nostv.pt.xml io_tv.trueid.net.xml'.split()
           missing = [f for f in expected if not os.path.exists(os.path.join(d, f)) or os.path.getsize(os.path.join(d, f)) < 1024]
           print(f'WARN: {len(missing)} grab outputs missing/empty: {missing}' if missing else 'all grab outputs present')
           PYEOF
 
       - name: Download epg.pw + epgshare01 + index sources
         env:
-          IPTV_ORG_FILES: "data/io_jiotv.xml,data/io_tataplay.xml,data/io_dishtv.xml,data/io_airtel.xml,data/io_zee5.xml,data/io_tvpassport.com.xml,data/io_tv24.co.uk.xml,data/io_tvireland.ie.xml,data/io_www.magenta.tv.xml,data/io_web.magentatv.de.xml,data/io_tv.blue.ch.xml,data/io_abc.net.au.xml,data/io_foxtel.com.au.xml,data/io_tvhebdo.com.xml,data/io_programetv.ro.xml,data/io_programacion-tv.elpais.com.xml,data/io_movistarplus.es.xml,data/io_programme-tv.net.xml,data/io_tvcesoir.fr.xml,data/io_meo.pt.xml,data/io_guidatv.sky.it.xml,data/io_cosmotetv.gr.xml,data/io_cyta.com.cy.xml,data/io_allente.se.xml,data/io_epg.112114.xyz.xml,data/io_gigatv.3bbtv.co.th.xml,data/io_tvinsider.com.xml"
+          IPTV_ORG_FILES: "data/io_jiotv.xml,data/io_tataplay.xml,data/io_dishtv.xml,data/io_airtel.xml,data/io_zee5.xml,data/io_tvpassport.com.xml,data/io_tv24.co.uk.xml,data/io_tvireland.ie.xml,data/io_www.magenta.tv.xml,data/io_web.magentatv.de.xml,data/io_tv.blue.ch.xml,data/io_abc.net.au.xml,data/io_foxtel.com.au.xml,data/io_tvhebdo.com.xml,data/io_programetv.ro.xml,data/io_programacion-tv.elpais.com.xml,data/io_movistarplus.es.xml,data/io_programme-tv.net.xml,data/io_tvcesoir.fr.xml,data/io_meo.pt.xml,data/io_guidatv.sky.it.xml,data/io_cosmotetv.gr.xml,data/io_cyta.com.cy.xml,data/io_allente.se.xml,data/io_epg.112114.xyz.xml,data/io_gigatv.3bbtv.co.th.xml,data/io_tvinsider.com.xml,data/io_tv24.se.xml,data/io_mujtvprogram.cz.xml,data/io_tvmustra.hu.xml,data/io_nostv.pt.xml,data/io_tv.trueid.net.xml"
           SKYHAWK_FILE: "data/skyhawk.xml"
           DSTV_FILE: "data/dstv.xml"
-          EPGONE_FILE: "data/epgone_ua.xml"
+          EPGONE_FILE: "data/epgone_cis.xml"
+          ALLENTE_FILE: "data/allente.xml"
+          TEAMS_FILE: "data/teamfixtures.xml"
+          BBCRADIO_FILE: "data/bbcradio.xml"
         run: python3 pipeline/fetch_sources.py ./data
 
       - name: Build mapping (fallback cascade + country gating + call signs)

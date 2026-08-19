@@ -130,6 +130,19 @@ NON_LINEAR_KEYWORDS = (
     'adult',
 )
 
+# Radio allowlist (2026-08-19, user-approved "include radio"): stations whose
+# names EXACTLY match (norm) a source channel that carries live programmes
+# (21 verified in daily sources: BBC Radio 2/3/4 via epgshare01 BE2, Classic
+# FM/Heart/Planet Rock via epg.pw, etc.). The dedicated 'bbcradio' fetcher
+# covers the BBC locals separately (stream-name-keyed, bypasses this table).
+RADIO_LINEAR_NORMS = {
+    'bbc radio 1xtra', 'bbc radio 2', 'bbc radio 3', 'bbc radio 4',
+    'bbc radio 4 extra', 'bbc radio london', 'classic fm', 'classic rock',
+    'gold', 'greatest hits', 'heart 80s', 'heart 90s', 'heart dance',
+    'kerrang', 'magic fm', 'planet rock', 'radio x', 'rte radio 1',
+    'talksport', 'virgin radio',
+}
+
 # Channel-NAME patterns for event-only slots (2026-08-15 audit: these carry
 # match-day feeds only — no published schedule exists, so chasing EPG for
 # them is wasted effort). Matched against the channel name, not category.
@@ -184,11 +197,16 @@ LINEAR_OVERRIDE_RES = (
     re.compile(r'\bNBA Tv\b', re.I),
     re.compile(r'\bLFC TV\b', re.I),
     re.compile(r'\bMUTV\b', re.I),
+    # 2026-08-19: real linear channel misfiled under VIP with a REAL provider
+    # epg_id (beinsports.us, 68 progs in provider feed). Name-scoped.
+    re.compile(r'^beIN Sport 1 FHD$', re.I),
 )
 
 
 def is_non_linear(category_name, channel_name=None):
     c = (category_name or '').lower()
+    if 'radio' in c and channel_name and norm(channel_name) in RADIO_LINEAR_NORMS:
+        return False  # allowlisted radio station with live source data
     if any(k in c for k in NON_LINEAR_KEYWORDS):
         # real LINEAR channels the provider misfiled under a non-linear
         # category (VIP/EPL/NBA League Pass) — force them through so their
