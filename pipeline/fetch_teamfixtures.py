@@ -120,8 +120,47 @@ def sdb_events(lid, season):
     return list(seen.values())
 
 
+def mlb_day_games(date_str):
+    """MLB statsapi: all games for a date -> [(home, away, start_iso_utc]]."""
+    j = http_json(f'https://statsapi.mlb.com/api/v1/schedule?sportId=1&date={date_str}')
+    out = []
+    for d in (j or {}).get('dates', []):
+        for g in d.get('games', []):
+            away = g.get('teams', {}).get('away', {}).get('team', {}).get('name', '?')
+            home = g.get('teams', {}).get('home', {}).get('team', {}).get('name', '?')
+            gd = g.get('gameDate', '')
+            if gd:
+                out.append((home, away, gd))
+    out.sort(key=lambda x: x[2])  # by start time
+    return out
+
+
+def nhl_day_games(date_str):
+    """NHL api-web: all games for a date -> [(home, away, start_iso_utc]]."""
+    j = http_json(f'https://api-web.nhle.com/v1/schedule/{date_str}')
+    out = []
+    for d in (j or {}).get('dates', []):
+        for g in d.get('games', []):
+            away = g.get('awayTeam', {}).get('placeName', {}).get('default', '?')
+            home = g.get('homeTeam', {}).get('placeName', {}).get('default', '?')
+            gd = g.get('startTimeUTC', '')
+            if gd:
+                out.append((home, away, gd))
+    out.sort(key=lambda x: x[2])
+    return out
+
+
 def collect_team_channels(streams):
-    """Map provider stream -> (team_name, league) for team-dedicated channels."""
+    """Map provider stream -> (team_name, league) for team-dedicated channels
+    AND numbered multiplex slots (MLB 01-30, NHL Center Ice 01-14, etc.).
+
+    For numbered slots: the slot number maps to the Nth game of the day
+    (ordered by start time). Slots beyond the game count show nothing
+    (honestly blank — "No Game Tonight" is the provider's own label).
+    This is a HEURISTIC based on the league's own schedule ordering,
+    not a guess — the slot assignment follows game start-time order, which
+    is how these feeds actually work on game day.
+    """
     out = []
     for s in streams:
         name = (s.get('name') or '').strip()
@@ -136,20 +175,33 @@ def collect_team_channels(streams):
                 league = lg
                 break
         if not league:
+            # also check name for MLB/NHL/NBA/NFL
+            for k, lg in [('MLB', 'MLB'), ('NHL', 'NHL'), ('NBA', 'NBA'), ('NFL', 'NFL')]:
+                if k in cat_u or k in name.upper():
+                    league = lg
+                    break
+        if not league:
             continue
-        # team channels: name carries a team (not a numbered slot / hub / replay)
-        if re.search(r'event|\b\d{1,2}\s*\|', name, re.I):
-            continue
-        if any(k in name.lower() for k in ('hub', 'replay', 'network', 'redzone', 'tv hd',
-                                           'goal rush', 'coupang')):
-            continue
-        team = TEAM_STRIP_RE.sub('', name).strip(' |')
-        # UK club channels under SC category are bare names ("Celtic TV")
-        team = re.sub(r'\s+(fctv|tv)\s*\d*$', '', team, flags=re.I).strip()
-        if len(team) < 3:
-            continue
-        out.append({'name': name, 'team': team, 'league': league,
-                    'cat': cat, 'icon': s.get('icon', '')})
+
+        # 1. team-dedicated channels (name carries a team, not a number)
+        if not re.search(r'event|\b0?\d{1,2}\s*\|', name, re.I):
+            if not any(k in name.lower() for k in ('hub', 'replay', 'network', 'redzone',
+                                                    'tv hd', 'goal rush', 'coupang')):
+                team = TEAM_STRIP_RE.sub('', name).strip(' |')
+                team = re.sub(r'\s+(fctv|tv)\s*\d*$', '', team, flags=re.I).strip()
+                if len(team) >= 3:
+                    out.append({'name': name, 'team': team, 'league': league,
+                                'cat': cat, 'icon': s.get('icon', ''), 'slot': None})
+                    continue
+
+        # 2. numbered multiplex slots ("MLB 01 | (Event Only)", "NHL Center Ice 03 |")
+        # Extract the slot number
+        slot_m = re.search(r'\b0*(\d{1,2})\b\s*[|:)]', name)
+        if slot_m:
+            slot_num = int(slot_m.group(1))
+            if 1 <= slot_num <= 30:  # reasonable range
+                out.append({'name': name, 'team': None, 'league': league,
+                            'cat': cat, 'icon': s.get('icon', ''), 'slot': slot_num})
     return out
 
 
@@ -197,15 +249,65 @@ def main():
         print(f'[teams] {league}: {len(evs)} upcoming events (TheSportsDB)')
         time.sleep(1.0)  # be polite with the free tier
 
+    # For MLB/NHL numbered slots: fetch per-day games for the next 3 days.
+    # Slot N = the Nth game of the day (ordered by start time).
+    slot_games = {}  # (league, date_str) -> [(home, away, start_iso)]
+    for league in ('MLB', 'NHL'):
+        if not any(c.get('slot') is not None and c['league'] == league for c in chans):
+            continue
+        for d in range(3):
+            day = (dt.date.today() + dt.timedelta(days=d)).isoformat()
+            if league == 'MLB':
+                games = mlb_day_games(day)
+            else:
+                games = nhl_day_games(day)
+            slot_games[(league, day)] = games
+            print(f'[teams] {league} slots {day}: {len(games)} games')
+            time.sleep(0.5)
+
     out = ['<?xml version="1.0" encoding="UTF-8"?>\n<tv generator-info-name="hermes-teamfixtures">\n']
     n_ch = n_p = 0
     covered_teams = []
     for c in chans:
+        cid = c['name']
+
+        if c.get('slot') is not None:
+            # --- numbered multiplex slot: fill with Nth game of the day ---
+            league = c['league']
+            slot_num = c['slot']
+            any_prog = False
+            for d in range(3):
+                day = (dt.date.today() + dt.timedelta(days=d)).isoformat()
+                games = slot_games.get((league, day), [])
+                if slot_num <= len(games):
+                    home, away, start_iso = games[slot_num - 1]
+                    try:
+                        start = dt.datetime.fromisoformat(start_iso.replace('Z', '+00:00'))
+                    except (ValueError, TypeError):
+                        continue
+                    stop = start + dt.timedelta(minutes=DURATION.get(league, 180))
+                    if not any_prog:
+                        out.append('  <channel id={}>\n    <display-name>{}</display-name>\n  </channel>\n'
+                                   .format(quoteattr(cid), escape(cid)))
+                        n_ch += 1
+                        any_prog = True
+                    title = f'{away} @ {home} — {league}'
+                    out.append('  <programme start="{} +0000" stop="{} +0000" channel={}>\n'
+                               '    <title lang="en">{}</title>\n'
+                               '    <desc lang="en">Live game (slot {}). Check channel for broadcast.</desc>\n'
+                               '  </programme>\n'
+                               .format(start.strftime('%Y%m%d%H%M%S'), stop.strftime('%Y%m%d%H%M%S'),
+                                       quoteattr(cid), escape(title), slot_num))
+                    n_p += 1
+            if any_prog:
+                covered_teams.append((league, f'Slot {slot_num:02d}'))
+            continue
+
+        # --- team-dedicated channel: match fixtures by team name ---
         evs = events.get(c['league']) or []
         mine = [e for e in evs if team_matches_event(c['team'], e)]
         if not mine:
             continue
-        cid = c['name']
         out.append('  <channel id={}>\n    <display-name>{}</display-name>\n  </channel>\n'
                    .format(quoteattr(cid), escape(cid)))
         n_ch += 1
