@@ -108,7 +108,7 @@ jobs:
           python3 pipeline/fetch_dstv.py data/dstv.xml --days 2 &
           (python3 pipeline/fetch_epgone.py data/epgone_cis.xml data/streams.json || echo "epg.one fetch failed (non-fatal: UA/MD bonus source)") &
           python3 pipeline/fetch_allente.py data/allente.xml --days 2 &
-          python3 pipeline/fetch_teamfixtures.py data/streams.json data/teamfixtures.xml data/teams_status.json &
+          python3 pipeline/fetch_teamfixtures.py data/streams.json data/teamfixtures.xml data/teams_claim.json data/teams_status.json &
           python3 pipeline/fetch_bbcradio.py data/streams.json data/bbcradio.xml data/bbc_status.json --days 2 &
 
           wait
@@ -142,6 +142,7 @@ jobs:
             --provider-index data/provider_index.json \
             --callsigns data/call_signs.json \
             --us-affiliates pipeline/us_affiliates.json \
+            --teams-claim data/teams_claim.json \
             -o data/mapping.json
 
       - name: Build final guide

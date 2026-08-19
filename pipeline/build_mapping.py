@@ -433,6 +433,8 @@ def main():
     ap.add_argument('--callsigns', default=None, help='fetch_sources call_signs.json')
     ap.add_argument('--us-affiliates', default=None,
                     help='pipeline/us_affiliates.json (Wikipedia affiliate table)')
+    ap.add_argument('--teams-claim', default=None,
+                    help='team-fixture claim list JSON (names to let through is_non_linear)')
     ap.add_argument('--fuzzy-threshold', type=float, default=0.85)
     ap.add_argument('-o', '--out', required=True)
     args = ap.parse_args()
@@ -440,6 +442,15 @@ def main():
     streams = json.load(open(args.streams))
     sources_index = json.load(open(args.sources_index))
     aff_idx = AffiliateIndex(args.us_affiliates) if args.us_affiliates else None
+
+    # Team-fixture claim list: names of team-dedicated channels the fixture
+    # generator populated. These channels' categories contain "EPL"/"NFL" etc.
+    # which is_non_linear() would normally drop; the claim list lets them
+    # through so their fixtures reach the guide.
+    teams_claim = set()
+    if args.teams_claim and os.path.exists(args.teams_claim):
+        teams_claim = set(json.load(open(args.teams_claim)))
+    print(f'[mapping] team-fixture claim list: {len(teams_claim)} channels')
 
     # US call-sign index (call sign -> [(source, id)]) for US-local matching
     cs_index = defaultdict(list)
@@ -476,8 +487,10 @@ def main():
         sid = str(s.get('stream_id', name))
         cat = s.get('cat_name', '')
 
-        # skip non-linear channels entirely (no EPG applies)
-        if is_non_linear(cat, name):
+        # skip non-linear channels entirely (no EPG applies) — EXCEPT channels
+        # the team-fixture generator explicitly claimed (their category keyword
+        # would otherwise drop them, but their fixtures are real schedule data).
+        if is_non_linear(cat, name) and name not in teams_claim:
             stats['non-linear-skipped'] += 1
             continue
 
