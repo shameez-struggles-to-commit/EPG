@@ -568,6 +568,7 @@ def main():
         name = s.get('name', '')
         sid = str(s.get('stream_id', name))
         cat = s.get('cat_name', '')
+        cc = country_hint(cat)
 
         # Dedicated-source rescue: a non-linear stream with an exact match in
         # its dedicated fetcher (plutofast for 24/7, bbcradio for radio) gets
@@ -582,11 +583,14 @@ def main():
             and norm(name) in provider_programme_names
             and not re.search(r'\b(event|ppv|ufc|center\s*ice|\b0?\d{1,2}\s*[|:])\b', name, re.I)
         )
-        if is_non_linear(cat, name) and name not in teams_claim and not rescue_src and not provider_linear_rescue:
+        # Categoryless radio names are not safely matchable by global fuzzy
+        # search. A reviewed bbcradio exact rescue may still pass above.
+        unnamed_radio = (cc is None and re.search(r'\bradio\b', name, re.I)
+                         and not rescue_src)
+        if (is_non_linear(cat, name) or unnamed_radio) and name not in teams_claim and not rescue_src and not provider_linear_rescue:
             stats['non-linear-skipped'] += 1
             continue
 
-        cc = country_hint(cat)
         allowed_eshare = {f'epgshare01:{f}' for f in COUNTRY_SOURCES.get(cc, [])}
 
         cands = []
@@ -761,8 +765,13 @@ def main():
                 else:
                     stats['provider:name-country-rejected'] += 1
 
-        # 4. fuzzy (lowest trust, appended last, country-gated)
+        # fuzzy (lowest trust, appended last, country-gated)
         for src in name_sources:
+            # A missing country is not permission to search every regional
+            # lineup. This was the Capital Radio -> Italian Radio Capital bug.
+            if cc is None and (src in FETCHER_COUNTRIES or src.startswith('epgshare01')
+                               or src.startswith('iptv-org') or src == 'tvepg'):
+                continue
             if src == 'teamfixtures':
                 continue  # team channels are exact-name only (norm strips "tv",
                 # so fuzzy would claim "Real Madrid TV" for the "Real Madrid" feed)

@@ -112,20 +112,19 @@ def decode_xml_text(value):
     return once
 
 
-def usable_programmes(plist, min_stop):
+def usable_programmes(plist, min_stop, now_key=None):
     """Sanitize a candidate BEFORE it can win the cascade.
 
-    The old selector used bool(raw_programmes), so one malformed row in a
-    higher-priority source blocked a lower-priority valid fallback. Return
-    only rows with parseable UTC timestamps, current stops, positive intervals,
-    and a sane <=31-day span.
+    `stop > now` is the important distinction: a row that ended earlier today
+    must not win merely because its calendar stop date equals today.
     """
+    now_key = now_key or dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d%H%M%S')
     good = []
     for p in plist or []:
         if len(p) < 2:
             continue
         st, sp = norm_time(p[0]), norm_time(p[1])
-        if len(st) != 20 or len(sp) != 20 or sp <= st or sp[:8] < min_stop:
+        if len(st) != 20 or len(sp) != 20 or sp[:14] <= now_key or sp <= st:
             continue
         try:
             sd = dt.date(int(st[:4]), int(st[4:6]), int(st[6:8]))
@@ -296,14 +295,12 @@ def main():
                 candidate_rows.append((c, usable))
 
         if candidate_rows:
-            # Normally preserve the explicit candidate priority. One narrow
-            # exception: provider feeds frequently contain generic Teleshopping/
-            # No Match filler while a regional source has the real schedule.
-            # Prefer the first substantive candidate only when the provider
-            # candidate is placeholder-only; never replace a substantive
-            # provider schedule merely because another source disagrees.
+            # Generic filler is not a real schedule regardless of source
+            # (Sky/epgshare/pluto also publish Teleshopping/No Match rows).
+            # If the first candidate is placeholder-only, use the first
+            # substantive current candidate; otherwise preserve priority.
             picked_c, selected_plist = candidate_rows[0]
-            if picked_c['source'] == 'provider' and is_placeholder_schedule(selected_plist):
+            if is_placeholder_schedule(selected_plist):
                 for alt_c, alt_plist in candidate_rows[1:]:
                     if not is_placeholder_schedule(alt_plist):
                         picked_c, selected_plist = alt_c, alt_plist

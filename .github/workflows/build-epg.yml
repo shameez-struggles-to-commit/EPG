@@ -95,28 +95,48 @@ jobs:
           WS="$GITHUB_WORKSPACE"
           mkdir -p "$WS/data"
 
-          # --- India per-site grabs (background; per-site to avoid id collisions) ---
-          npm run grab --- --sites=jiotv.com --maxConnections=4 --output=$WS/data/io_jiotv.xml &
-          npm run grab --- --sites=tataplay.com --maxConnections=4 --output=$WS/data/io_tataplay.xml &
-          npm run grab --- --sites=dishtv.in --maxConnections=4 --output=$WS/data/io_dishtv.xml &
-          npm run grab --- --sites=airtelxstream.in --maxConnections=4 --output=$WS/data/io_airtel.xml &
-          npm run grab --- --sites=zee5.com --maxConnections=4 --output=$WS/data/io_zee5.xml &
+          # --- all iptv-org grabs: bounded concurrency + per-job status ---
+          # AUDIT-6: wait -n discarded exit statuses and missing outputs were
+          # warnings. Track every launched job and fail this fetch stage when a
+          # non-empty filtered channel list produces no usable output.
+          IO_PIDS=(); IO_FILES=(); IO_DONE=(); IO_FAIL=0
+          run_io() {
+            local out="$1"; shift
+            "$@" &
+            IO_PIDS+=("$!"); IO_FILES+=("$out")
+          }
+          reap_first() {
+            local pid="${IO_PIDS[0]}"
+            local out="${IO_FILES[0]}"
+            if ! wait "$pid"; then IO_FAIL=1; echo "iptv-org grab failed: $out"; fi
+            IO_DONE+=("$out")
+            IO_PIDS=("${IO_PIDS[@]:1}"); IO_FILES=("${IO_FILES[@]:1}")
+          }
 
-          # --- remaining non-India sites (background, throttled) ---
-          # NOTE: programtv.onet.pl was REMOVED 2026-08-16 — the official site
-          # throttles ~1 req/s per IP (10+ min regardless of parallelism, even
-          # across runner IPs). Polish channels are served by epgshare01 PL1
-          # (free, ~22s download, ~150 channels) instead; the user confirmed
-          # dropping the official PL source is fine.
+          # India per-site grabs (per-site avoids numeric-id collisions)
+          run_io "$WS/data/io_jiotv.xml" npm run grab -- --sites=jiotv.com --maxConnections=4 --output="$WS/data/io_jiotv.xml"
+          run_io "$WS/data/io_tataplay.xml" npm run grab -- --sites=tataplay.com --maxConnections=4 --output="$WS/data/io_tataplay.xml"
+          run_io "$WS/data/io_dishtv.xml" npm run grab -- --sites=dishtv.in --maxConnections=4 --output="$WS/data/io_dishtv.xml"
+          run_io "$WS/data/io_airtel.xml" npm run grab -- --sites=airtelxstream.in --maxConnections=4 --output="$WS/data/io_airtel.xml"
+          run_io "$WS/data/io_zee5.xml" npm run grab -- --sites=zee5.com --maxConnections=4 --output="$WS/data/io_zee5.xml"
+
+          # Remaining non-India sites (throttled to six in flight).
           for site in tvpassport.com tv24.co.uk tvireland.ie www.magenta.tv web.magentatv.de tv.blue.ch abc.net.au foxtel.com.au tvhebdo.com programetv.ro programacion-tv.elpais.com movistarplus.es programme-tv.net tvcesoir.fr meo.pt guidatv.sky.it cosmotetv.gr cyta.com.cy allente.se epg.112114.xyz gigatv.3bbtv.co.th tvinsider.com tv24.se mujtvprogram.cz tvmustra.hu nostv.pt tv.trueid.net; do
             CH="$WS/data/io_channels/$site.channels.xml"
             if [ -s "$CH" ]; then
-              npx tsx scripts/commands/epg/grab.ts --channels="$CH" --output="$WS/data/io_${site}.xml" --days=2 --timeout=30000 --maxConnections=10 &
+              OUT="$WS/data/io_${site}.xml"
+              run_io "$OUT" npx tsx scripts/commands/epg/grab.ts --channels="$CH" --output="$OUT" --days=2 --timeout=30000 --maxConnections=10
             else
               echo "skip $site (empty filter)"
             fi
-            # throttle: wait every 6 jobs
-            if [ $(jobs -r | wc -l) -ge 6 ]; then wait -n; fi
+            if [ "${#IO_PIDS[@]}" -ge 6 ]; then reap_first; fi
+          done
+          while [ "${#IO_PIDS[@]}" -gt 0 ]; do reap_first; done
+          [ "$IO_FAIL" = "0" ] || { echo "one or more iptv-org grabs failed"; exit 1; }
+          for out in "${IO_DONE[@]}" "${IO_FILES[@]}"; do
+            if [ ! -s "$out" ] || [ "$(wc -c < "$out")" -lt 1024 ]; then
+              echo "iptv-org output missing/empty: $out"; exit 1
+            fi
           done
 
           # --- custom fetchers (background; only need streams.json) ---
@@ -353,7 +373,9 @@ jobs:
 
   health:
     runs-on: ubuntu-latest
-    if: github.event_name == 'schedule'
+    # Run after every trigger, not only the daily schedule. A push/manual build
+    # can also publish a bad Pages object and must be checked before release is
+    # considered healthy.
     needs: [build, deploy]
     steps:
       - name: Check deployed guide (fail on non-200/invalid)

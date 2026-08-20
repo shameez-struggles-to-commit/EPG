@@ -189,7 +189,21 @@ def collect_team_channels(streams):
             continue
 
         team = TEAM_STRIP_RE.sub('', name).strip(' |')
+        # Club feeds are commonly named "Arsenal | EPL ˢᴰ" / "Chelsea | EPL
+        # HD". Keep the stable portion before the pipe; category/quality
+        # decorations must not become part of the team identity (AUDIT-6: all
+        # 21 EPL clubs were otherwise detected but 0 claimed).
+        if '|' in name:
+            parts = [p.strip() for p in name.split('|') if p.strip()]
+            if parts and parts[0].upper() in {'EPL','NFL','SPFL','SC','SERIE A','LALIGA','LA LIGA'} and len(parts) > 1:
+                team = parts[1]
+            elif parts:
+                team = parts[0]
         team = re.sub(r'\s+(fctv|tv)\s*\d*$', '', team, flags=re.I).strip()
+        team = re.sub(r'\s+[ˢᵈᴴᴰFHDfhdSD]+$', '', team).strip()
+        # Club-branded broadcasters are not team fixture channels.
+        if team.upper() in {'LFC','MUTV','LFC TV'}:
+            continue
         if len(team) < 3:
             continue
         out.append({'name': name, 'team': team, 'league': league,
