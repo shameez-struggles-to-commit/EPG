@@ -110,7 +110,10 @@ EXTRA_COUNTRY_SOURCES = {
 
 
 def download(url, dest, timeout=300, insecure=False):
-    if os.path.exists(dest) and os.path.getsize(dest) > 0:
+    # Production builds must refresh sources. Reuse is an explicit local-dev
+    # opt-in only (EPG_REUSE_CACHE=1); otherwise an old non-empty/truncated file
+    # cannot silently masquerade as today's feed (AUDIT-5 F-10).
+    if os.environ.get('EPG_REUSE_CACHE') == '1' and os.path.exists(dest) and os.path.getsize(dest) > 0:
         return os.path.getsize(dest)
     req = urllib.request.Request(url, headers=UA)
     ctx = None
@@ -120,8 +123,17 @@ def download(url, dest, timeout=300, insecure=False):
         ctx.verify_mode = ssl.CERT_NONE
     with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
         data = r.read()
-    with open(dest, 'wb') as f:
+    if not data:
+        raise ValueError(f'empty response from {url}')
+    # Reject obvious HTML/error pages before promotion; XMLTV/gzip validation
+    # happens in build_index/read_xml. Write atomically so a failed download
+    # never leaves a partially written final file.
+    if not url.endswith('.xml') and not url.endswith('.gz') and b'<html' in data[:4096].lower():
+        raise ValueError(f'HTML response where feed expected: {url}')
+    part = dest + '.part'
+    with open(part, 'wb') as f:
         f.write(data)
+    os.replace(part, dest)
     return len(data)
 
 

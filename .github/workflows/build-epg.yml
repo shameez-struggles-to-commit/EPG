@@ -153,13 +153,28 @@ jobs:
           [ "$FAIL" = "0" ] || { echo "failing build: required fetcher(s) exited non-zero"; exit 1; }
 
           # required OUTPUT validation: exit 0 + non-empty valid XMLTV file
-          for f in skyhawk.xml dstv.xml allente.xml teamfixtures.xml bbcradio.xml; do
-            p="data/$f"
-            if [ ! -s "$p" ] || ! grep -q '<tv' "$p"; then
-              echo "REQUIRED fetcher output missing/invalid: $p"; FAIL=1
-            fi
-          done
-          [ "$FAIL" = "0" ] || exit 1
+          python3 - <<'PYEOF'
+          import os, re, sys
+          # (minimum channels, minimum programmes) — zero-programme <tv/> output
+          # is a fetch failure, not a valid empty sports day.
+          req = {
+              'skyhawk.xml': (10, 100), 'dstv.xml': (10, 100),
+              'allente.xml': (1, 10), 'teamfixtures.xml': (1, 1),
+              'bbcradio.xml': (1, 1),
+          }
+          failures=[]
+          for f,(min_ch,min_pr) in req.items():
+              p=os.path.join('data',f)
+              if not os.path.exists(p) or not os.path.getsize(p):
+                  failures.append(f'{f}: missing/empty'); continue
+              txt=open(p,errors='ignore').read()
+              ch=len(re.findall(r'<channel\b',txt)); pr=len(re.findall(r'<programme\b',txt))
+              print(f'{f}: {ch} channels, {pr} programmes')
+              if ch < min_ch or pr < min_pr:
+                  failures.append(f'{f}: {ch} channels/{pr} programmes below {min_ch}/{min_pr}')
+          if failures:
+              print('\\n'.join('FAIL '+x for x in failures)); sys.exit(1)
+          PYEOF
           echo "=== grab outputs ==="
           ls -la "$WS/data/io_*.xml" | head -50
           # sanity check: warn (non-fatal) about missing/empty grab outputs

@@ -102,6 +102,42 @@ def norm_time(t):
     return utc.strftime('%Y%m%d%H%M%S') + ' +0000'
 
 
+def decode_xml_text(value):
+    """Decode at most two layers of upstream XML/HTML entities."""
+    if not value:
+        return value
+    once = html.unescape(value)
+    if re.search(r'&[a-zA-Z]+;|&#\d+;', once):
+        return html.unescape(once)
+    return once
+
+
+def usable_programmes(plist, min_stop):
+    """Sanitize a candidate BEFORE it can win the cascade.
+
+    The old selector used bool(raw_programmes), so one malformed row in a
+    higher-priority source blocked a lower-priority valid fallback. Return
+    only rows with parseable UTC timestamps, current stops, positive intervals,
+    and a sane <=31-day span.
+    """
+    good = []
+    for p in plist or []:
+        if len(p) < 2:
+            continue
+        st, sp = norm_time(p[0]), norm_time(p[1])
+        if len(st) != 20 or len(sp) != 20 or sp <= st or sp[:8] < min_stop:
+            continue
+        try:
+            sd = dt.date(int(st[:4]), int(st[4:6]), int(st[6:8]))
+            ed = dt.date(int(sp[:4]), int(sp[4:6]), int(sp[6:8]))
+            if (ed - sd).days > 31:
+                continue
+        except ValueError:
+            continue
+        good.append(p)
+    return good
+
+
 def parse_xmltv(path, needed_ids, min_stop=None):
     """Parse one XMLTV file, keeping only channels/programmes in needed_ids.
 
@@ -119,7 +155,8 @@ def parse_xmltv(path, needed_ids, min_stop=None):
         body = m.group('body')
         dn = DN_RE.search(body)
         ic = ICON_RE.search(body)
-        channels[cid] = (dn.group(1) if dn else cid, ic.group(1) if ic else '')
+        channels[cid] = (decode_xml_text(dn.group(1)) if dn else cid,
+                         decode_xml_text(ic.group(1)) if ic else '')
     progs = defaultdict(list)
     n_stale = 0
     for m in PROG_RE.finditer(data):
@@ -237,26 +274,25 @@ def main():
         for c in mp['candidates']:
             src, source_id = c['source'], c['source_id']
             if src == 'pk':
-                if pk.get(source_id):
-                    picked = (src, source_id, c['method'])
+                usable = usable_programmes(
+                    [(p.get('start',''), p.get('stop',''), p.get('title',''), '', '')
+                     for p in pk.get(source_id, [])], min_stop)
+                if usable:
+                    picked = (src, source_id, c['method'], usable)
                     break
                 continue
             pr = progs.get(src, {}).get(source_id)
-            if pr:
-                picked = (src, source_id, c['method'])
+            usable = usable_programmes(pr, min_stop)
+            if usable:
+                picked = (src, source_id, c['method'], usable)
                 break
         if not picked:
             no_data['none'] += 1
             continue
-        src, source_id, method = picked
+        src, source_id, method, selected_plist = picked
 
-        # programmes
-        plist = []
-        if src == 'pk':
-            for p in pk[source_id]:
-                plist.append((p['start'], p['stop'], p['title'], '', ''))
-        else:
-            plist = progs[src][source_id]
+        # programmes: use the already-sanitized list that won the cascade.
+        plist = selected_plist
 
         # display-name: stream name first, then the source channel's name
         dn, icon = '', s.get('icon', '')

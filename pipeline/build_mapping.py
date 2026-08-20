@@ -26,6 +26,7 @@ Canonical id: the stream's epg_channel_id when real, else the raw stream name.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -276,54 +277,37 @@ def canonical_id(stream):
 
 
 def build_collision_split(streams):
-    """AUDIT-4 F-01: duplicated provider epg_channel_ids merge unrelated
-    streams into one XMLTV channel (325 collision IDs / 882 streams deployed,
-    incl. discoverychannel.de x38 across 9 countries).
+    """Return an immutable stream_id -> XMLTV channel-id map.
 
-    Return {stream_name: replacement_cid}. For each real provider epg_id used
-    by N>1 streams, ONE keeper keeps the shared id; every other stream is
-    split onto its own stable synthetic id 'xtream:<stream_id>' (immutable
-    across panel renames; empty/junk-id streams were ALREADY name-keyed, the
-    rename-churn risk is unchanged for them).
-
-    Keeper rule: the stream whose normalized name matches the id's tail best
-    (e.g. discoverychannel.de keeper = the actual Discovery Channel DE
-    stream, not Auto Motor Sport). Ties -> lowest stream_id (deterministic).
+    Every stream with an empty/junk provider ID, and every member of a
+    duplicated provider-ID group, gets `xtream:<stream_id>`. Keeping one
+    arbitrary member on a shared provider ID is still unsafe because the
+    provider ID is demonstrably reused across countries/channels. Unique,
+    validated provider IDs remain unchanged for compatibility.
     """
-    from collections import defaultdict
-    by_eid = defaultdict(list)
+    from collections import Counter
+    counts = Counter((s.get('epg_channel_id') or '').strip() for s in streams
+                     if is_real_epg_id((s.get('epg_channel_id') or '').strip()))
+    identity = {}
     for s in streams:
+        stream_id = str(s.get('stream_id') or '').strip()
+        name = s.get('name', '')
         eid = (s.get('epg_channel_id') or '').strip()
-        if is_real_epg_id(eid):
-            by_eid[eid].append(s)
+        if not stream_id:
+            # Provider streams normally always have stream_id. This fallback is
+            # deliberately marked unstable rather than silently pretending a
+            # display name is an identity.
+            identity[name] = f'xtream:missing:{hashlib.sha256(name.encode()).hexdigest()[:16]}'
+        elif not is_real_epg_id(eid) or counts.get(eid, 0) > 1:
+            identity[stream_id] = f'xtream:{stream_id}'
+        else:
+            identity[stream_id] = eid
+    return identity
 
-    def id_tail_norm(eid):
-        tail = eid.rsplit('.', 1)[-1] if '.' in eid else eid
-        return norm(tail)
 
-    split = {}
-    for eid, group in by_eid.items():
-        if len(group) < 2:
-            continue
-        tail = id_tail_norm(eid)
-        # keeper = best normalized-name match against the id tail; tie -> lowest stream_id
-        def keeper_key(s):
-            nm = norm(s.get('name', '') or '')
-            score = 2 if nm == tail else (1 if tail and (tail in nm or nm in tail) else 0)
-            try:
-                sid_n = int(s.get('stream_id') or 0)
-            except (TypeError, ValueError):
-                sid_n = 0
-            return (-score, sid_n)
-        group_sorted = sorted(group, key=keeper_key)
-        keeper = group_sorted[0]
-        for s in group_sorted[1:]:
-            try:
-                sid = str(int(s.get('stream_id') or 0))
-            except (TypeError, ValueError):
-                sid = '0'
-            split[s.get('name', '')] = f'xtream:{sid}'
-    return split
+def build_identity_map(streams):
+    """Alias for the public identity-map operation (kept for callers)."""
+    return build_collision_split(streams)
 
 
 def country_hint(cat_name):
@@ -565,18 +549,21 @@ def main():
                     dedicated_rescue[nm] = 'bbcradio'
 
     prov_by_name = {}
+    provider_programme_names = set()
     if args.provider_index:
         pidx = json.load(open(args.provider_index))
         prov_by_name = {norm(dn): cid for cid, dn in pidx.get('ids', {}).items() if cid}
+        provider_programme_names = {norm(dn) for dn in pidx.get('names_with_progs', []) if dn}
 
     mapping = {}
     stats = defaultdict(int)
     # AUDIT-4 F-01: split duplicated provider epg_ids onto stable synthetic
     # xtream:<stream_id> ids so unrelated streams stop merging into one
     # XMLTV channel (882 streams were affected).
-    collision_split = build_collision_split(streams)
-    stats['collision-split-streams'] = len(collision_split)
-    print(f'[mapping] collision split: {len(collision_split)} streams -> xtream:<stream_id>')
+    identity_map = build_identity_map(streams)
+    stats['identity-synthetic-streams'] = sum(1 for x in identity_map.values() if x.startswith('xtream:'))
+    print(f'[mapping] identity map: {len(identity_map)} streams; '
+          f"{stats['identity-synthetic-streams']} synthetic xtream IDs")
     for s in streams:
         name = s.get('name', '')
         sid = str(s.get('stream_id', name))
@@ -588,8 +575,14 @@ def main():
         rescue_src = dedicated_rescue.get(name)
 
         # skip non-linear channels entirely (no EPG applies) — EXCEPT channels
-        # the team-fixture generator claimed, or a dedicated source rescued.
-        if is_non_linear(cat, name) and name not in teams_claim and not rescue_src:
+        # the team-fixture generator claimed, a dedicated source rescued, or a
+        # valid provider ID/name proves this is actually a linear channel.
+        provider_linear_rescue = (
+            is_real_epg_id(s.get('epg_channel_id'))
+            and norm(name) in provider_programme_names
+            and not re.search(r'\b(event|ppv|ufc|center\s*ice|\b0?\d{1,2}\s*[|:])\b', name, re.I)
+        )
+        if is_non_linear(cat, name) and name not in teams_claim and not rescue_src and not provider_linear_rescue:
             stats['non-linear-skipped'] += 1
             continue
 
@@ -611,7 +604,7 @@ def main():
             if cands:
                 mapping[sid] = {
                     'name': name, 'cat_name': cat, 'country': cc,
-                    'canonical_id': collision_split.get(name) or canonical_id(s),
+                    'canonical_id': identity_map.get(sid) or canonical_id(s),
                     'candidates': [{'source': c[1], 'source_id': c[2], 'method': c[3],
                                     'confidence': c[4]} for c in cands],
                 }
@@ -693,6 +686,12 @@ def main():
             elif src == 'greek':
                 qname = greek_q(name)
             eids = src_idx[src].exact(qname)
+            if src == 'epg.pw' and len(eids) > 1:
+                # epg.pw is a worldwide aggregate with opaque numeric IDs;
+                # duplicate normalized names are different regions/variants.
+                # Never choose eids[0] by file order.
+                stats['epg.pw:ambiguous-exact'] += 1
+                continue
             if src == 'skyhawk':
                 # skyhawk source IDs carry a territory prefix ("GB#2075");
                 # keep only candidates whose territory matches this stream's
@@ -738,13 +737,12 @@ def main():
         # provider id is a COLLISION id (split onto xtream:<sid>) must not
         # ALSO emit the shared id as a candidate.
         prov_cid = str(s.get('epg_channel_id') or '').strip()
-        if is_real_epg_id(prov_cid) and name not in collision_split:
+        if is_real_epg_id(prov_cid) and identity_map.get(sid) == prov_cid:
             cands.append((1.5, 'provider', prov_cid, 'epg-id', 1.0))
             stats['provider:epg-id'] += 1
-        elif is_real_epg_id(prov_cid) and name in collision_split:
-            # split stream: the shared id belongs to the keeper; this stream
-            # still benefits from the provider feed but must select through
-            # name candidates like any other name-keyed channel.
+        elif is_real_epg_id(prov_cid) and identity_map.get(sid, '').startswith('xtream:'):
+            # synthetic identity: the duplicated provider ID is not safe as a
+            # shared candidate; source/name candidates may still provide data.
             stats['provider:epg-id-split'] += 1
         else:
             pn = norm(name)
@@ -813,7 +811,7 @@ def main():
             'name': name,
             'cat_name': cat,
             'country': cc,
-            'canonical_id': collision_split.get(name) or canonical_id(s),
+            'canonical_id': identity_map.get(sid) or canonical_id(s),
             'candidates': [{'source': c[1], 'source_id': c[2], 'method': c[3],
                             'confidence': c[4]} for c in dedup],
         }

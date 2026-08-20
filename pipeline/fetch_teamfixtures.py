@@ -198,15 +198,17 @@ def collect_team_channels(streams):
 
 
 def team_matches_event(team, ev):
-    """True if the fixture involves the team (normalized name containment)."""
+    """Match a team channel only to the exact normalized fixture team name.
+
+    Substring containment caused Dundee to receive Dundee United fixtures.
+    Identity-sensitive sports matching must prefer blank over a wrong team's
+    schedule; future naming exceptions belong in a reviewed alias table.
+    """
     t = norm(team)
     if not t:
         return False
     for side in (ev.get('strHomeTeam') or '', ev.get('strAwayTeam') or ''):
-        s = norm(side)
-        if not s:
-            continue
-        if t == s or t in s or s in t:
+        if t == norm(side):
             return True
     return False
 

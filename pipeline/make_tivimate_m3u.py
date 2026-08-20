@@ -22,7 +22,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from build_mapping import build_collision_split  # noqa: E402
+from build_mapping import build_identity_map, canonical_id  # noqa: E402
 
 
 def main():
@@ -38,7 +38,7 @@ def main():
         # mapping.json carries the split indirectly; a flat name->cid file is
         # simpler — recompute for now (deterministic, same inputs).
         pass
-    split = build_collision_split(streams)
+    identity = build_identity_map(streams)
 
     auth = json.load(open(args.auth))
     server = auth['server_info']['url']
@@ -65,11 +65,8 @@ def main():
         name = s.get('name', '')
         if not sid or not name:
             continue
-        # SAME rule as the guide: split streams use xtream:<stream_id>, the
-        # keeper and unique-id streams use their provider epg id / name.
-        eid = (s.get('epg_channel_id') or '').strip()
-        from build_mapping import canonical_id
-        cid = split.get(name) or canonical_id(s)
+        # SAME rule as the guide: immutable stream identity map.
+        cid = identity.get(str(sid)) or canonical_id(s)
         attrs = (
             f'tvg-id="{cid}" '
             f'tvg-name="{name}" '
@@ -82,7 +79,7 @@ def main():
 
     with open(args.out, 'w') as f:
         f.write('\n'.join(lines) + '\n')
-    n_split = sum(1 for s in streams if s.get('name') in split)
+    n_split = sum(1 for cid in identity.values() if cid.startswith('xtream:'))
     print(f'[m3u] {n} channels ({n_split} on xtream:<stream_id> ids) -> {args.out}')
 
 
