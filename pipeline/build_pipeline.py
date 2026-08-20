@@ -40,7 +40,7 @@ ATTR_RE = re.compile(r'(\w+)="([^"]*)"')
 TITLE_RE = re.compile(r'<title[^>]*>([^<]*)</title>')
 DESC_RE = re.compile(r'<desc[^>]*>([^<]*)</desc>')
 CAT_RE = re.compile(r'<category[^>]*>([^<]*)</category>')
-XMLTV_TS_RE = re.compile(r'^(\d{14})\s*([+-]\d{4})?$')
+XMLTV_TS_RE = re.compile(r'^(\d{14})\s*(?:([+-]\d{4})|(GMT([+-]\d{1,2})))?$')
 
 
 def read(path):
@@ -58,8 +58,10 @@ def norm_time(t):
     t = (t or '').strip()
     if not t:
         return t
-    # ISO-8601 (has 'T', or dash+colon like 2026-08-14 15:00:00)
-    if 'T' in t or ('-' in t and ':' in t):
+    # ISO-8601 (dash-dates like 2026-08-19T06:00:00Z or 2026-08-14 15:00:00).
+    # NOTE: 'T' alone is not enough — "GMT+3"/"GMT-5" offsets contain a literal
+    # T (and GMT-5 contains a dash). Require a full ISO date prefix.
+    if re.match(r'^\d{4}-\d{2}-\d{2}', t):
         iso = t.replace('Z', '+00:00')
         try:
             d = dt.datetime.fromisoformat(iso)
@@ -72,7 +74,16 @@ def norm_time(t):
     if not m:
         return t
     base = m.group(1)
-    off = m.group(2) or '+0000'
+    off = m.group(2)
+    if off is None and m.group(4) is not None:
+        # "GMT+3" style named offset (CyTA/cyta pack) — hours only, 1-2 digits.
+        # Normalize to a ±HHMM string: GMT+3 -> +0300, GMT-5 -> -0500,
+        # GMT+10 -> +1000.
+        goff = m.group(4)
+        gsign = '+' if goff[0] == '+' else '-'
+        gh = int(goff[1:])
+        off = f'{gsign}{gh:02d}00'
+    off = off or '+0000'
     try:
         y = int(base[0:4])
         mo = int(base[4:6])
