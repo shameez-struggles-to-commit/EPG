@@ -111,7 +111,7 @@ JUNK_EPG_RE = re.compile(
 # provider category prefix -> ISO country code
 CAT_COUNTRY = {
     'US': 'US', 'USA': 'US',
-    'UK': 'UK', 'IRE': 'IE', 'GB': 'UK', 'ITV': 'UK', 'BBC': 'UK',
+    'UK': 'UK', 'IRE': 'IE', 'GB': 'UK', 'ITV': 'UK', 'BBC': 'UK', 'SC': 'UK',
     'CA': 'CA', 'DE': 'DE', 'FR': 'FR', 'IT': 'IT', 'GR': 'GR',
     'RO': 'RO', 'ES': 'ES', 'ESP': 'ES', 'PL': 'PL', 'PT': 'PT',
     'AU': 'AU', 'ZA': 'ZA', 'PH': 'PH', 'DK': 'DK', 'TR': 'TR',
@@ -478,6 +478,21 @@ def resolve_affiliate(name, aff_idx):
     return None
 
 
+EVENT_ONLY_NAME_RE = re.compile(
+    r'(?:\b(?:NBA|MLB|UFC|PPV)\s*\d{1,2}\s*[|:]|'
+    r'\bNHL\s+Center\s+Ice\s*\d+|'
+    r'\bNFL\s+(?:Sunday\s+Ticket|RedZone)\s*\d*|'
+    r'\b(?:UEFA|EFL|FA\s+Cup)\s*\d+\s*[|:]|'
+    r'\bSky\s+Sports\s*\+\s*\|?\s*Event\s*\d*|'
+    r'\bPremier\s+Sports\s+GB\s*\|\s*Event\s*\d*|'
+    r'\(Events?\s+Only\)|\(Event\s+Only\))', re.I)
+
+
+def is_event_only_stream(name, category=''):
+    return bool(EVENT_ONLY_NAME_RE.search(name or '') or
+                re.search(r'\b(?:Events?\s+Only|Event\s+Only)\b', category or '', re.I))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--streams', required=True)
@@ -501,9 +516,19 @@ def main():
     # which is_non_linear() would normally drop; the claim list lets them
     # through so their fixtures reach the guide.
     teams_claim = set()
+    teams_claim_names = set()
     if args.teams_claim and os.path.exists(args.teams_claim):
-        teams_claim = set(json.load(open(args.teams_claim)))
-    print(f'[mapping] team-fixture claim list: {len(teams_claim)} channels')
+        raw_claim = json.load(open(args.teams_claim))
+        # Current format is immutable stream IDs. Accept legacy name claims for
+        # one migration cycle, but never use raw whitespace as identity.
+        for x in raw_claim:
+            sx = str(x).strip()
+            if sx.isdigit():
+                teams_claim.add(sx)
+            else:
+                teams_claim_names.add(sx)
+    print(f'[mapping] team-fixture claim list: {len(teams_claim)} stream IDs, '
+          f'{len(teams_claim_names)} legacy names')
 
     # US call-sign index (call sign -> [(source, id)]) for US-local matching
     cs_index = defaultdict(list)
@@ -581,13 +606,13 @@ def main():
         provider_linear_rescue = (
             is_real_epg_id(s.get('epg_channel_id'))
             and norm(name) in provider_programme_names
-            and not re.search(r'\b(event|ppv|ufc|center\s*ice|\b0?\d{1,2}\s*[|:])\b', name, re.I)
+            and not is_event_only_stream(name, cat)
         )
         # Categoryless radio names are not safely matchable by global fuzzy
         # search. A reviewed bbcradio exact rescue may still pass above.
         unnamed_radio = (cc is None and re.search(r'\bradio\b', name, re.I)
                          and not rescue_src)
-        if (is_non_linear(cat, name) or unnamed_radio) and name not in teams_claim and not rescue_src and not provider_linear_rescue:
+        if (is_non_linear(cat, name) or unnamed_radio or is_event_only_stream(name, cat)) and sid not in teams_claim and name.strip() not in teams_claim_names and not rescue_src and not provider_linear_rescue:
             stats['non-linear-skipped'] += 1
             continue
 
@@ -684,7 +709,7 @@ def main():
             if src == 'tvepg' and cc and cc != 'IN':
                 if not diaspora_allowed(src, cc):
                     continue
-            qname = name
+            qname = name.strip() if src == 'teamfixtures' else name
             if src == 'epgone':
                 qname = epg_q(name)
             elif src == 'greek':
@@ -713,7 +738,7 @@ def main():
                 # teamfixtures keys channels by the EXACT provider stream name.
                 # norm() strips "tv", so "Real Madrid TV" would collide with the
                 # "Real Madrid" team feed — require the exact claimed name.
-                eids = [e for e in eids if e == name]
+                eids = [e for e in eids if e == qname]
             if eids:
                 # classify: 'exact' if the source is allowed for this stream
                 # through its normal gating, else 'diaspora' (exact-match
@@ -729,7 +754,8 @@ def main():
                 else:
                     normal = True
                 method = 'exact' if normal else 'diaspora'
-                cands.append((src_tier(src), src, eids[0], method, 0.99))
+                candidate_tier = src_tier(src) + (20 if method == 'diaspora' else 0)
+                cands.append((candidate_tier, src, eids[0], method, 0.99))
                 stats[f'{src}:{method}'] += 1
 
         # 3. provider (epg_channel_id then display-name)

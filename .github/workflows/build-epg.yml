@@ -137,6 +137,11 @@ jobs:
             if [ ! -s "$out" ] || [ "$(wc -c < "$out")" -lt 1024 ]; then
               echo "iptv-org output missing/empty: $out"; exit 1
             fi
+            # A large XML file with zero programmes is still a failed grab
+            # (AUDIT-8: jiotv and tvinsider passed size-only validation).
+            if ! grep -q '<programme' "$out"; then
+              echo "iptv-org output has zero programmes: $out"; exit 1
+            fi
           done
 
           # --- custom fetchers (background; only need streams.json) ---
@@ -225,26 +230,32 @@ jobs:
           # "successful" manifest. Required sources must exist, be non-empty,
           # parse, and carry programmes; a failure here stops the deploy.
           REQUIRED = {
-              'epgpw_global.xml.gz':   ('epg.pw', 100),        # (file, min channels)
+              'epgpw_global.xml.gz':   ('epg.pw', 100),
               'es_US_LOCALS1.xml.gz': ('epgshare01 US locals', 100),
               'es_UK1.xml.gz':        ('epgshare01 UK', 10),
           }
+          REQUIRED_PLAIN = {'provider.xml': ('provider XMLTV', 100)}
           # key source-index entries that MUST be present after indexing
           REQUIRED_SOURCES = ['epg.pw', 'skyhawk', 'tvepg']
           data = 'data'
           failures = []
-          for fname, (label, min_ch) in REQUIRED.items():
+          for fname, (label, min_ch) in {**REQUIRED, **REQUIRED_PLAIN}.items():
               p = os.path.join(data, fname)
               if not os.path.exists(p) or os.path.getsize(p) == 0:
                   failures.append(f'{label}: file missing/empty ({fname})'); continue
               try:
-                  txt = gzip.open(p, 'rt', errors='ignore').read()
+                  opener = gzip.open if fname.endswith('.gz') else open
+                  txt = opener(p, 'rt', errors='ignore').read()
                   n = len(re.findall(r'<channel ', txt))
                   pr = len(re.findall(r'<programme', txt))
+                  max_stop = max(re.findall(r'\bstop="(\d{8})', txt) or ['0'])
+                  today = __import__('datetime').datetime.utcnow().strftime('%Y%m%d')
                   if n < min_ch or pr == 0:
                       failures.append(f'{label}: only {n} channels / {pr} programmes (<{min_ch})')
+                  elif max_stop < today:
+                      failures.append(f'{label}: stale-only feed (max stop {max_stop} < {today})')
                   else:
-                      print(f'OK {label}: {n} channels, {pr} programmes')
+                      print(f'OK {label}: {n} channels, {pr} programmes, max stop {max_stop}')
               except Exception as e:
                   failures.append(f'{label}: unreadable ({e})')
           idx = json.load(open(os.path.join(data, 'sources_index.json')))
@@ -283,8 +294,8 @@ jobs:
 
       - name: Validate XMLTV
         run: |
-          python3 -c "
-          import gzip, xml.dom.minidom, re
+          python3 - <<'PYEOF'
+          import gzip, xml.dom.minidom, re, sys
           d = gzip.open('public/guide.xml.gz','rt',errors='ignore').read()
           xml.dom.minidom.parseString(d)
           chans = len(re.findall(r'<channel ', d))
@@ -292,7 +303,18 @@ jobs:
           print(f'XMLTV VALID: {chans} channels, {progs} programmes')
           if chans < 1500 or progs < 100000:
               raise SystemExit('Coverage too low — aborting deploy')
-          "
+          # AUDIT-8 P0 guard: numbered event slots are intentionally blank.
+          event_channels = []
+          for cm in re.finditer(r'<channel id="([^"]+)"[^>]*>(.*?)</channel>', d, re.S):
+              cid, body = cm.group(1), cm.group(2)
+              label = ' '.join(re.findall(r'<display-name[^>]*>([^<]*)</display-name>', body))
+              if re.search(r'\b(?:NBA|MLB|UFC|PPV)\s*\d{1,2}\s*[|:]|\bNHL\s+Center\s+Ice\s*\d+|\(Events?\s+Only\)', label, re.I):
+                  event_channels.append(cid)
+          leaked = [cid for cid in event_channels if re.search(r'<programme[^>]*channel="'+re.escape(cid)+r'"', d)]
+          if leaked:
+              raise SystemExit('Event-only channels have programmes: '+', '.join(leaked[:20]))
+          print(f'event-only guard passed: {len(event_channels)} blank event channels')
+          PYEOF
 
       - name: Generate coverage report + drop alert
         env:
@@ -311,6 +333,9 @@ jobs:
               f"Linear channels covered: {cov['covered_channels']} / {cov['linear_unique_names']}\n"
               f"Channels in guide: {new_chans}\n"
               f"Programmes: {new_progs}\n"
+              f"Selected streams: {cov.get('selected_streams', 'n/a')}\n"
+              f"Quarantined overlaps/conflicts: {cov.get('overlap_rows_quarantined', 0)}/{cov.get('active_conflicts_quarantined', 0)}\n"
+              f"Dropped bad rows: {cov.get('bad_rows_dropped', 0)}\n"
               f"Linear stream entries: {cov['linear_streams']} / {cov['total_streams']} total\n"
               f"Per-source: {json.dumps(cov['per_source'], sort_keys=True)}\n"
           )

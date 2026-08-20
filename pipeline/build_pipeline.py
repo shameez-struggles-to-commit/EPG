@@ -19,6 +19,7 @@ Inputs (see workflow):
 
 import argparse
 import datetime as dt
+import difflib
 import gzip
 import html
 import json
@@ -174,6 +175,49 @@ def active_title_at(plist, now_key):
     return None
 
 
+def resolve_overlaps(plist):
+    """Quarantine conflicting overlapping rows for one canonical channel.
+
+    Identical-title overlaps are merged into one union row. Different-title
+    overlaps are removed as an ambiguous block rather than showing two
+    simultaneous programmes. Wrong/ambiguous is worse than a gap.
+    """
+    rows = sorted(plist, key=lambda p: (p[0], p[1]))
+    out, dropped, blocked_until = [], 0, ''
+    for row in rows:
+        st, sp, ti = row[0], row[1], _clean_title(row[2])
+        if blocked_until and st < blocked_until:
+            dropped += 1
+            if sp > blocked_until:
+                blocked_until = sp
+            continue
+        if not out:
+            out.append(row); continue
+        prev = out[-1]
+        if st >= prev[1]:
+            out.append(row); continue
+        if _clean_title(prev[2]) == ti:
+            if sp > prev[1]:
+                out[-1] = (prev[0], sp, prev[2], prev[3], prev[4])
+            dropped += 1
+        else:
+            out.pop()
+            dropped += 2
+            blocked_until = max(prev[1], sp)
+    return out, dropped
+
+
+def material_title_conflict(titles):
+    """True when two active titles are materially different, not just wording."""
+    vals = [_clean_title(t) for t in titles if t and not _is_placeholder_title(t)]
+    vals = list(dict.fromkeys(vals))
+    for i, a in enumerate(vals):
+        for b in vals[i + 1:]:
+            if difflib.SequenceMatcher(None, a, b).ratio() < 0.68:
+                return True
+    return False
+
+
 def parse_xmltv(path, needed_ids, min_stop=None):
     """Parse one XMLTV file, keeping only channels/programmes in needed_ids.
 
@@ -297,6 +341,7 @@ def main():
     out_chans = {}
     out_progs = defaultdict(list)
     no_data = defaultdict(int)
+    active_material_conflicts = 0
 
     for s in streams:
         sid = str(s.get('stream_id', s.get('name', '')))
@@ -319,12 +364,18 @@ def main():
                 candidate_rows.append((c, usable))
 
         if candidate_rows:
-            picked_c, selected_plist = candidate_rows[0]
-            # AUDIT-7 P1-1: arbitrate on the ACTIVE row, not the whole
-            # horizon. A schedule whose current row is generic filler
-            # (Teleshopping / "..programmes start at 7.00pm") loses to a
-            # candidate whose active row is substantive.
             now_key = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d%H%M%S')
+            active_candidates = []
+            for cand, cand_plist in candidate_rows:
+                title = active_title_at(cand_plist, now_key)
+                if title is not None and not _is_placeholder_title(title):
+                    active_candidates.append((cand, title))
+            active_conflict = (len(active_candidates) >= 2 and
+                               material_title_conflict([x[1] for x in active_candidates]))
+            if active_conflict:
+                active_material_conflicts += 1
+            picked_c, selected_plist = candidate_rows[0]
+            # AUDIT-8/7: arbitrate on the ACTIVE row, not the whole horizon.
             act = active_title_at(selected_plist, now_key)
             if act is not None and _is_placeholder_title(act):
                 for alt_c, alt_plist in candidate_rows[1:]:
@@ -332,8 +383,15 @@ def main():
                     if alt_act is not None and not _is_placeholder_title(alt_act):
                         picked_c, selected_plist = alt_c, alt_plist
                         break
+            # If substantive candidates still disagree materially, quarantine
+            # only the current interval. Future schedule data remains useful;
+            # a wrong current programme is worse than a temporary blank.
+            if active_conflict:
+                selected_plist = [p for p in selected_plist
+                                  if not (len(p) >= 2 and
+                                          norm_time(p[0])[:14] <= now_key < norm_time(p[1])[:14])]
             # Whole-schedule placeholder check remains for edge cases.
-            if is_placeholder_schedule(selected_plist):
+            if not active_conflict and is_placeholder_schedule(selected_plist):
                 for alt_c, alt_plist in candidate_rows[1:]:
                     if not is_placeholder_schedule(alt_plist):
                         picked_c, selected_plist = alt_c, alt_plist
@@ -370,6 +428,7 @@ def main():
     seen = set()
     stale_writes = 0
     bad_intervals = 0
+    overlap_drops = 0
     for cid, plist in out_progs.items():
         keep = []
         for (st, sp, ti, de, ca) in plist:
@@ -405,11 +464,18 @@ def main():
             seen.add(key)
             keep.append((nst, nsp, ti, de, ca))
         if keep:
+            keep, od = resolve_overlaps(keep)
+            overlap_drops += od
+        if keep:
             final_progs[cid] = keep
     if stale_writes:
         print(f'[currency] dropped {stale_writes} stale programmes at write time')
     if bad_intervals:
         print(f'[currency] dropped {bad_intervals} programmes with bad/non-positive intervals')
+    if overlap_drops:
+        print(f'[overlap] quarantined {overlap_drops} overlapping programme rows')
+    if active_material_conflicts:
+        print(f'[conflict] quarantined current intervals on {active_material_conflicts} channels')
     empty_ids = [cid for cid in out_chans if cid not in final_progs]
     for cid in empty_ids:
         del out_chans[cid]
@@ -453,9 +519,13 @@ def main():
             'linear_streams': len(linear),
             'linear_unique_names': len(linear_names),
             'covered_channels': len(out_chans),
+            'selected_streams': sum(used.values()),
             'programmes': total,
             'per_source': dict(used),
             'no_data': dict(no_data),
+            'overlap_rows_quarantined': overlap_drops,
+            'active_conflicts_quarantined': active_material_conflicts,
+            'bad_rows_dropped': bad_intervals,
         }
         json.dump(cov, open(args.coverage_out, 'w'), indent=1)
         denom = max(1, cov['linear_unique_names'])

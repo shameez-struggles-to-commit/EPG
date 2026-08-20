@@ -18,11 +18,23 @@ Usage: make_tivimate_m3u.py <streams.json> <auth.json> <out.m3u> [--collision-sp
 import argparse
 import json
 import os
+import re
 import sys
+from urllib.parse import quote
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from build_mapping import build_identity_map, canonical_id  # noqa: E402
+
+
+def m3u_text(value):
+    """Safe one-line M3U attribute/display text."""
+    value = re.sub(r'[\r\n\u2028\u2029\x00-\x1f]', ' ', str(value or ''))
+    return value.replace('&', '&amp;').replace('"', '&quot;')
+
+
+def m3u_url_text(value):
+    return quote(str(value or ''), safe='')
 
 
 def main():
@@ -60,6 +72,8 @@ def main():
 
     lines = ['#EXTM3U']
     n = 0
+    scheme = 'https'
+    eu = m3u_url_text(user); ep = m3u_url_text(password)
     for s in streams:
         sid = s.get('stream_id')
         name = s.get('name', '')
@@ -68,13 +82,13 @@ def main():
         # SAME rule as the guide: immutable stream identity map.
         cid = identity.get(str(sid)) or canonical_id(s)
         attrs = (
-            f'tvg-id="{cid}" '
-            f'tvg-name="{name}" '
-            f'tvg-logo="{s.get("icon") or s.get("stream_icon") or ""}" '
-            f'group-title="{cats.get(s.get("category_id"), s.get("cat_name") or "")}"'
+            f'tvg-id="{m3u_text(cid)}" '
+            f'tvg-name="{m3u_text(name)}" '
+            f'tvg-logo="{m3u_text(s.get("icon") or s.get("stream_icon") or "")}" '
+            f'group-title="{m3u_text(cats.get(s.get("category_id"), s.get("cat_name") or ""))}"'
         )
-        lines.append(f'#EXTINF:-1 {attrs},{name}')
-        lines.append(f'http://{server}/live/{user}/{password}/{sid}.ts')
+        lines.append(f'#EXTINF:-1 {attrs},{m3u_text(name)}')
+        lines.append(f'{scheme}://{server}/live/{eu}/{ep}/{m3u_url_text(sid)}.ts')
         n += 1
 
     with open(args.out, 'w') as f:

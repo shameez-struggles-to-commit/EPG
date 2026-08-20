@@ -206,7 +206,8 @@ def collect_team_channels(streams):
             continue
         if len(team) < 3:
             continue
-        out.append({'name': name, 'team': team, 'league': league,
+        out.append({'name': name, 'stream_id': str(s.get('stream_id') or ''),
+                    'team': team, 'league': league,
                     'cat': cat, 'icon': s.get('icon', '')})
     return out
 
@@ -273,8 +274,8 @@ def main():
         out.append('  <channel id={}>\n    <display-name>{}</display-name>\n  </channel>\n'
                    .format(quoteattr(cid), escape(cid)))
         n_ch += 1
-        claimed.append(cid)
-        covered.append((c['league'], c['team']))
+        claimed.append(c['stream_id'])
+        covered.append((c['stream_id'], c['league'], c['team']))
         for e in mine:
             date, tm = e.get('dateEvent') or '', e.get('strTime') or ''
             if not date or not tm:
