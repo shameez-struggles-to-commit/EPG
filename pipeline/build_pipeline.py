@@ -138,6 +138,19 @@ def usable_programmes(plist, min_stop):
     return good
 
 
+def is_placeholder_schedule(plist):
+    """True when a candidate is only a generic provider filler schedule."""
+    titles = []
+    for p in plist or []:
+        if len(p) > 2:
+            titles.append(re.sub(r'\s+', ' ', str(p[2]).strip().lower()))
+    if not titles:
+        return True
+    placeholders = ('teleshopping', 'teleshopping 2026', 'no match',
+                    'no information', 'channel off air', 'servicestatus')
+    return all(any(x == t or x in t for x in placeholders) for t in titles)
+
+
 def parse_xmltv(path, needed_ids, min_stop=None):
     """Parse one XMLTV file, keeping only channels/programmes in needed_ids.
 
@@ -270,22 +283,35 @@ def main():
         cid = mp['canonical_id']
         if not cid:
             continue
-        picked = None
+        candidate_rows = []
         for c in mp['candidates']:
             src, source_id = c['source'], c['source_id']
             if src == 'pk':
                 usable = usable_programmes(
                     [(p.get('start',''), p.get('stop',''), p.get('title',''), '', '')
                      for p in pk.get(source_id, [])], min_stop)
-                if usable:
-                    picked = (src, source_id, c['method'], usable)
-                    break
-                continue
-            pr = progs.get(src, {}).get(source_id)
-            usable = usable_programmes(pr, min_stop)
+            else:
+                usable = usable_programmes(progs.get(src, {}).get(source_id), min_stop)
             if usable:
-                picked = (src, source_id, c['method'], usable)
-                break
+                candidate_rows.append((c, usable))
+
+        if candidate_rows:
+            # Normally preserve the explicit candidate priority. One narrow
+            # exception: provider feeds frequently contain generic Teleshopping/
+            # No Match filler while a regional source has the real schedule.
+            # Prefer the first substantive candidate only when the provider
+            # candidate is placeholder-only; never replace a substantive
+            # provider schedule merely because another source disagrees.
+            picked_c, selected_plist = candidate_rows[0]
+            if picked_c['source'] == 'provider' and is_placeholder_schedule(selected_plist):
+                for alt_c, alt_plist in candidate_rows[1:]:
+                    if not is_placeholder_schedule(alt_plist):
+                        picked_c, selected_plist = alt_c, alt_plist
+                        break
+            picked = (picked_c['source'], picked_c['source_id'],
+                      picked_c['method'], selected_plist)
+        else:
+            picked = None
         if not picked:
             no_data['none'] += 1
             continue
