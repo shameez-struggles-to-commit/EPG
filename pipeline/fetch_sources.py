@@ -125,11 +125,18 @@ def download(url, dest, timeout=300, insecure=False):
         data = r.read()
     if not data:
         raise ValueError(f'empty response from {url}')
-    # Reject obvious HTML/error pages before promotion; XMLTV/gzip validation
-    # happens in build_index/read_xml. Write atomically so a failed download
-    # never leaves a partially written final file.
-    if not url.endswith('.xml') and not url.endswith('.gz') and b'<html' in data[:4096].lower():
-        raise ValueError(f'HTML response where feed expected: {url}')
+    # Reject HTML/error pages regardless of URL suffix (AUDIT-7: the old
+    # suffix-condition made this dead code for every real .xml/.gz feed).
+    probe = data
+    if url.endswith('.gz'):
+        try:
+            probe = gzip.decompress(data)[:4096]
+        except OSError:
+            probe = b''  # invalid gzip: caught by index/parse validation
+    head = probe.lstrip().lower()
+    if head.startswith(b'<!doctype html') or head.startswith(b'<html') or b'<html' in head[:512]:
+        raise ValueError(f'HTML response where XMLTV feed expected: {url}')
+    # Write atomically so a failed download never leaves a partial final file.
     part = dest + '.part'
     with open(part, 'wb') as f:
         f.write(data)

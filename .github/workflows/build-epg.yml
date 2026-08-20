@@ -196,7 +196,7 @@ jobs:
               print('\\n'.join('FAIL '+x for x in failures)); sys.exit(1)
           PYEOF
           echo "=== grab outputs ==="
-          ls -la "$WS/data/io_*.xml" | head -50
+          ls -la "$WS"/data/io_*.xml 2>/dev/null | head -50 || true
           # sanity check: warn (non-fatal) about missing/empty grab outputs
           python3 - "$WS/data" <<'PYEOF'
           import os, sys

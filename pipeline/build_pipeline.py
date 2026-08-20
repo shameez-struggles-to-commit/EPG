@@ -126,6 +126,10 @@ def usable_programmes(plist, min_stop, now_key=None):
         st, sp = norm_time(p[0]), norm_time(p[1])
         if len(st) != 20 or len(sp) != 20 or sp[:14] <= now_key or sp <= st:
             continue
+        # AUDIT-7 P1-4: an empty title renders as a blank row in TiviMate —
+        # worse than no row. Drop title-less programmes entirely.
+        if len(p) < 3 or not str(p[2] or '').strip():
+            continue
         try:
             sd = dt.date(int(st[:4]), int(st[4:6]), int(st[6:8]))
             ed = dt.date(int(sp[:4]), int(sp[4:6]), int(sp[6:8]))
@@ -137,17 +141,37 @@ def usable_programmes(plist, min_stop, now_key=None):
     return good
 
 
+PLACEHOLDER_TOKENS = ('teleshopping', 'no match', 'no information',
+                      'channel off air', 'servicestatus', 'channel no longer available',
+                      'programmes start at')
+
+
+def _clean_title(t):
+    return re.sub(r'\s+', ' ', str(t or '').strip().lower())
+
+
+def _is_placeholder_title(t):
+    t = _clean_title(t)
+    return any(x == t or x in t for x in PLACEHOLDER_TOKENS)
+
+
 def is_placeholder_schedule(plist):
-    """True when a candidate is only a generic provider filler schedule."""
-    titles = []
-    for p in plist or []:
-        if len(p) > 2:
-            titles.append(re.sub(r'\s+', ' ', str(p[2]).strip().lower()))
+    """True when a candidate contains only generic filler rows."""
+    titles = [p[2] for p in (plist or []) if len(p) > 2]
     if not titles:
         return True
-    placeholders = ('teleshopping', 'teleshopping 2026', 'no match',
-                    'no information', 'channel off air', 'servicestatus')
-    return all(any(x == t or x in t for x in placeholders) for t in titles)
+    return all(_is_placeholder_title(t) for t in titles)
+
+
+def active_title_at(plist, now_key):
+    """Return the title of the row active at now_key, or None."""
+    for p in plist or []:
+        if len(p) < 2:
+            continue
+        st, sp = norm_time(p[0]), norm_time(p[1])
+        if len(st) == 20 and len(sp) == 20 and st[:14] <= now_key < sp[:14]:
+            return p[2] if len(p) > 2 else ''
+    return None
 
 
 def parse_xmltv(path, needed_ids, min_stop=None):
@@ -295,11 +319,20 @@ def main():
                 candidate_rows.append((c, usable))
 
         if candidate_rows:
-            # Generic filler is not a real schedule regardless of source
-            # (Sky/epgshare/pluto also publish Teleshopping/No Match rows).
-            # If the first candidate is placeholder-only, use the first
-            # substantive current candidate; otherwise preserve priority.
             picked_c, selected_plist = candidate_rows[0]
+            # AUDIT-7 P1-1: arbitrate on the ACTIVE row, not the whole
+            # horizon. A schedule whose current row is generic filler
+            # (Teleshopping / "..programmes start at 7.00pm") loses to a
+            # candidate whose active row is substantive.
+            now_key = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d%H%M%S')
+            act = active_title_at(selected_plist, now_key)
+            if act is not None and _is_placeholder_title(act):
+                for alt_c, alt_plist in candidate_rows[1:]:
+                    alt_act = active_title_at(alt_plist, now_key)
+                    if alt_act is not None and not _is_placeholder_title(alt_act):
+                        picked_c, selected_plist = alt_c, alt_plist
+                        break
+            # Whole-schedule placeholder check remains for edge cases.
             if is_placeholder_schedule(selected_plist):
                 for alt_c, alt_plist in candidate_rows[1:]:
                     if not is_placeholder_schedule(alt_plist):

@@ -217,6 +217,10 @@ def team_matches_event(team, ev):
     Substring containment caused Dundee to receive Dundee United fixtures.
     Identity-sensitive sports matching must prefer blank over a wrong team's
     schedule; future naming exceptions belong in a reviewed alias table.
+
+    Broadcaster channels (Celtic TV, Real Madrid TV) are club-branded linear
+    channels, not fixture feeds — rejected before the name normalizer strips
+    their distinguishing 'TV' token (AUDIT-7 P1-6).
     """
     t = norm(team)
     if not t:

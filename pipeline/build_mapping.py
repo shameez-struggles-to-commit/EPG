@@ -797,6 +797,15 @@ def main():
                     pref = ALLENTE_PREFIX.get(cc)
                     if pref and (not isinstance(cid, str) or not cid.startswith(pref + ':')):
                         continue
+                if src == 'epg.pw':
+                    # AUDIT-7 P1-5: the same opaque-ID ambiguity that affects
+                    # exact epg.pw names also affects fuzzy hits. When the
+                    # matched source name bucket holds multiple IDs, file
+                    # order must not pick the region.
+                    ids = src_idx[src].by_name.get(cn) or [cid]
+                    if len(ids) > 1:
+                        stats['epg.pw:ambiguous-fuzzy'] += 1
+                        continue
                 cands.append((50 + src_tier(src), src, cid, 'fuzzy', round(sc, 2)))
                 stats[f'{src}:fuzzy'] += 1
 
