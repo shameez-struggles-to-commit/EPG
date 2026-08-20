@@ -130,12 +130,15 @@ def download(url, dest, timeout=300, insecure=False):
     probe = data
     if url.endswith('.gz'):
         try:
-            probe = gzip.decompress(data)[:4096]
-        except OSError:
-            probe = b''  # invalid gzip: caught by index/parse validation
-    head = probe.lstrip().lower()
+            probe = gzip.decompress(data)
+        except OSError as e:
+            raise ValueError(f'invalid gzip response from {url}: {e}') from e
+    head = probe[:65536].lstrip().lower()
     if head.startswith(b'<!doctype html') or head.startswith(b'<html') or b'<html' in head[:512]:
         raise ValueError(f'HTML response where XMLTV feed expected: {url}')
+    if url.endswith('.xml') or url.endswith('.gz'):
+        if b'<tv' not in head and b'<channel' not in head:
+            raise ValueError(f'not an XMLTV response from {url}')
     # Write atomically so a failed download never leaves a partial final file.
     part = dest + '.part'
     with open(part, 'wb') as f:

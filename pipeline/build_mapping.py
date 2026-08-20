@@ -485,12 +485,16 @@ EVENT_ONLY_NAME_RE = re.compile(
     r'\b(?:UEFA|EFL|FA\s+Cup)\s*\d+\s*[|:]|'
     r'\bSky\s+Sports\s*\+\s*\|?\s*Event\s*\d*|'
     r'\bPremier\s+Sports\s+GB\s*\|\s*Event\s*\d*|'
+    r'^\s*\d{1,2}\s*\|\s*\d{1,2}:\d{2}\b|'
     r'\(Events?\s+Only\)|\(Event\s+Only\))', re.I)
 
 
 def is_event_only_stream(name, category=''):
+    if (re.search(r'\bUFC\b', category or '', re.I)
+            and not re.search(r'^(?:UK\s*\|\s*)?UFC\s*TV\b', name or '', re.I)):
+        return True
     return bool(EVENT_ONLY_NAME_RE.search(name or '') or
-                re.search(r'\b(?:Events?\s+Only|Event\s+Only)\b', category or '', re.I))
+                re.search(r'\b(?:Events?\s+Only|Event\s+Only|Todays\s+Live\s+Events?)\b', category or '', re.I))
 
 
 def main():
@@ -599,6 +603,7 @@ def main():
         # its dedicated fetcher (plutofast for 24/7, bbcradio for radio) gets
         # candidates ONLY from that source — no fuzzy, no provider fallback.
         rescue_src = dedicated_rescue.get(name)
+        team_claimed = sid in teams_claim or name.strip() in teams_claim_names
 
         # skip non-linear channels entirely (no EPG applies) — EXCEPT channels
         # the team-fixture generator claimed, a dedicated source rescued, or a
@@ -612,7 +617,7 @@ def main():
         # search. A reviewed bbcradio exact rescue may still pass above.
         unnamed_radio = (cc is None and re.search(r'\bradio\b', name, re.I)
                          and not rescue_src)
-        if (is_non_linear(cat, name) or unnamed_radio or is_event_only_stream(name, cat)) and sid not in teams_claim and name.strip() not in teams_claim_names and not rescue_src and not provider_linear_rescue:
+        if (is_non_linear(cat, name) or unnamed_radio or is_event_only_stream(name, cat)) and not team_claimed and not rescue_src and not provider_linear_rescue:
             stats['non-linear-skipped'] += 1
             continue
 
@@ -653,24 +658,33 @@ def main():
         alias = NAME_ALIASES.get(name) or NAME_ALIASES.get(norm(name))
         if alias:
             for src in name_sources:
+                alias_diaspora = False
                 if src.startswith('epgshare01') and src not in allowed_eshare:
                     if not diaspora_allowed(src, cc):
                         continue
+                    alias_diaspora = True
                 if src in FETCHER_COUNTRIES and cc and cc not in FETCHER_COUNTRIES[src]:
                     continue
                 if src.startswith('iptv-org') and not iptv_org_allowed(src, cc):
                     if not diaspora_allowed(src, cc):
                         continue
+                    alias_diaspora = True
                 if src == 'tvepg' and cc and cc != 'IN':
                     if not diaspora_allowed(src, cc):
                         continue
+                    alias_diaspora = True
                 eids = src_idx[src].exact(alias)
+                if src == 'epg.pw' and len(eids) > 1:
+                    stats['epg.pw:ambiguous-alias'] += 1
+                    continue
                 if src == 'skyhawk':
                     terr = SKY_TERRITORY.get(cc)
                     if terr:
                         eids = [e for e in eids if isinstance(e, str) and e.startswith(terr + '#')]
                 if eids:
-                    cands.append((src_tier(src), src, eids[0], 'alias', 0.97))
+                    alias_tier = src_tier(src) + (20 if alias_diaspora else 0)
+                    cands.append((alias_tier, src, eids[0],
+                                  'diaspora-alias' if alias_diaspora else 'alias', 0.97))
                     stats['alias'] += 1
 
         # 1c. US call-sign match (very precise; US locals named "FOX: FL | Tampa | WTVT")
@@ -835,6 +849,10 @@ def main():
                 cands.append((50 + src_tier(src), src, cid, 'fuzzy', round(sc, 2)))
                 stats[f'{src}:fuzzy'] += 1
 
+        if team_claimed:
+            # Claimed team streams must never fall through to a broadcaster
+            # schedule when the fixture source is empty/stale.
+            cands = [c for c in cands if c[1] == 'teamfixtures']
         if not cands:
             stats['unmatched'] += 1
             continue

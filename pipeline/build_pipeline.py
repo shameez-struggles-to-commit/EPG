@@ -366,15 +366,33 @@ def main():
         if candidate_rows:
             now_key = dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d%H%M%S')
             active_candidates = []
+            trusted_active = []
+            trusted_methods = {'epg-id', 'exact', 'alias', 'diaspora-alias', 'callsign', 'affiliate', 'override'}
             for cand, cand_plist in candidate_rows:
                 title = active_title_at(cand_plist, now_key)
                 if title is not None and not _is_placeholder_title(title):
                     active_candidates.append((cand, title))
-            active_conflict = (len(active_candidates) >= 2 and
-                               material_title_conflict([x[1] for x in active_candidates]))
+                    if cand.get('method') in trusted_methods:
+                        trusted_active.append((cand, title))
+            # Only quarantine substantive disagreement between two trusted
+            # candidates. A fuzzy distractor must not blank an exact-agreeing
+            # schedule (AUDIT-9 over-broad conflict finding).
+            conflict_basis = trusted_active if len(trusted_active) >= 2 else []
+            active_conflict = (len(conflict_basis) >= 2 and
+                               material_title_conflict([x[1] for x in conflict_basis]))
             if active_conflict:
                 active_material_conflicts += 1
             picked_c, selected_plist = candidate_rows[0]
+            # If the highest candidate has no current row, use a lower trusted
+            # current candidate rather than silently publishing a gap.
+            selected_act = active_title_at(selected_plist, now_key)
+            if selected_act is None:
+                for alt_c, alt_plist in candidate_rows[1:]:
+                    alt_act = active_title_at(alt_plist, now_key)
+                    if (alt_act is not None and not _is_placeholder_title(alt_act)
+                            and alt_c.get('method') in trusted_methods):
+                        picked_c, selected_plist = alt_c, alt_plist
+                        break
             # AUDIT-8/7: arbitrate on the ACTIVE row, not the whole horizon.
             act = active_title_at(selected_plist, now_key)
             if act is not None and _is_placeholder_title(act):

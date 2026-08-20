@@ -149,6 +149,11 @@ def sdb_events(lid, season):
     return list(seen.values())
 
 
+TEAM_BROADCASTER_RE = re.compile(
+    r'^(?:EPL\s*\|\s*)?(?:LFC\s*TV|MUTV|Celtic\s+TV(?:\s+2)?|'
+    r'Real\s+Madrid\s+TV|Rangers\s+TV)$', re.I)
+
+
 def collect_team_channels(streams):
     """Return list of team-dedicated channel dicts: {name, team, league, cat, icon}.
 
@@ -188,6 +193,10 @@ def collect_team_channels(streams):
         if re.search(r'\b0?\d{1,2}\s*[|:)]', name):
             continue
 
+        # Club-branded broadcaster channels are not team-dedicated fixture
+        # feeds; wrong fixture rows are worse than blank.
+        if TEAM_BROADCASTER_RE.match(name):
+            continue
         team = TEAM_STRIP_RE.sub('', name).strip(' |')
         # Club feeds are commonly named "Arsenal | EPL ˢᴰ" / "Chelsea | EPL
         # HD". Keep the stable portion before the pipe; category/quality
