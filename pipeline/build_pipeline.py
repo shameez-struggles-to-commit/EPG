@@ -252,12 +252,22 @@ def main():
     final_progs = {}
     seen = set()
     stale_writes = 0
+    bad_intervals = 0
     for cid, plist in out_progs.items():
         keep = []
         for (st, sp, ti, de, ca) in plist:
             nst, nsp = norm_time(st), norm_time(sp)
             if nsp and nsp[:8] < min_stop:
                 stale_writes += 1
+                continue
+            # reject malformed times and non-positive intervals (stop <= start).
+            # norm_time returns a 'YYYYMMDDHHMMSS +0000' (20 chars) on success,
+            # or the malformed input unchanged otherwise.
+            if (not nst or len(nst) != 20) or (not nsp or len(nsp) != 20):
+                bad_intervals += 1
+                continue
+            if nsp <= nst:
+                bad_intervals += 1
                 continue
             key = (nst, cid)
             if key in seen:
@@ -268,6 +278,8 @@ def main():
             final_progs[cid] = keep
     if stale_writes:
         print(f'[currency] dropped {stale_writes} stale programmes at write time')
+    if bad_intervals:
+        print(f'[currency] dropped {bad_intervals} programmes with bad/non-positive intervals')
     empty_ids = [cid for cid in out_chans if cid not in final_progs]
     for cid in empty_ids:
         del out_chans[cid]

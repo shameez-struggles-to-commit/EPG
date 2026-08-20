@@ -16,6 +16,7 @@ import argparse
 import datetime as dt
 import json
 import re
+import sys
 import urllib.request
 from xml.sax.saxutils import escape, quoteattr
 

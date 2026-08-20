@@ -28,8 +28,15 @@ import urllib.request
 from xml.sax.saxutils import escape, quoteattr
 
 import os
+import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from matcher import norm
+
+try:
+    from zoneinfo import ZoneInfo
+    LONDON = ZoneInfo('Europe/London')
+except Exception:  # noqa: BLE001  (zoneinfo is stdlib 3.9+; guard is defensive)
+    LONDON = None
 
 html_unescape = _html_mod.unescape
 
@@ -39,6 +46,7 @@ INDEX_URL = 'https://www.bbc.co.uk/schedules'
 MONTHS = {m: i + 1 for i, m in enumerate(
     ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])}
 
+# aria-label="19 Aug 06:00: Graham Liver, 19/08/2026" — full local date + time.
 ARIA_RE = re.compile(r'aria-label="(\d{1,2}) (\w{3}) (\d{2}:\d{2}): ([^"]+?), \d{2}/\d{2}/\d{4}"')
 PID_RE = re.compile(r'href="/schedules/(p00[a-z0-9]{5})"[^>]*>\s*'
                     r'<div class="sch-network-name[^"]*">([^<]+)</div>')
@@ -85,12 +93,52 @@ def radio_services():
     return out
 
 
-def parse_day(html):
-    """[(HH:MM, title)] from a schedule day page (aria-labels)."""
+def parse_day(html, year):
+    """Return [(aware_datetime_utc, title)] parsed from a schedule day page.
+
+    The aria-label carries the FULL local date+time ("19 Aug 06:00: ..."),
+    so we derive the true local datetime from it (not the page URL, which is
+    wrong for cross-midnight programmes), attach Europe/London (BST-aware),
+    convert to UTC, and dedupe identical anchors the page sometimes repeats.
+    """
+    seen = set()
     progs = []
-    for d, mon, tm, title in ARIA_RE.findall(html or ''):
-        progs.append((tm, title.strip()))
+    for dstr, mon, tm, title in ARIA_RE.findall(html or ''):
+        day = int(dstr)
+        mo = MONTHS.get(mon[:3])
+        if mo is None:
+            continue
+        hh, mm = int(tm[:2]), int(tm[3:5])
+        key = (day, mo, tm, title.strip())
+        if key in seen:
+            continue
+        seen.add(key)
+        # BBC schedules span the Dec->Jan boundary; if the page is for Dec but
+        # an anchor says Jan 1, it's next year.
+        y = year if not (mo == 1 and year and dstr != '01' and mo < 3) else year
+        try:
+            local = dt.datetime(y, mo, day, hh, mm, tzinfo=LONDON)
+        except ValueError:
+            continue
+        progs.append((local.astimezone(dt.timezone.utc), title.strip()))
+    progs.sort(key=lambda x: x[0])
     return progs
+
+
+def _merge_progs(progs):
+    """Dedupe by start time (keep first title) and drop non-positive intervals."""
+    out = {}
+    for st, ti in progs:
+        if st not in out:
+            out[st] = ti
+    sorted_items = sorted(out.items())
+    merged = []
+    for i, (st, ti) in enumerate(sorted_items):
+        nsp = sorted_items[i + 1][0] if i + 1 < len(sorted_items) else st + dt.timedelta(hours=1)
+        if nsp <= st:
+            continue  # reject zero/negative interval
+        merged.append((st, nsp, ti))
+    return merged
 
 
 def main():
@@ -172,32 +220,18 @@ def main():
             day = today + dt.timedelta(days=d)
             url = f'https://www.bbc.co.uk/schedules/{pid}/{day.year}/{day.month:02d}/{day.day:02d}'
             html = http(url)
-            progs = parse_day(html)
-            for tm, title in progs:
-                try:
-                    hh, mm = int(tm[:2]), int(tm[3:5])
-                except ValueError:
-                    continue
-                start = dt.datetime(day.year, day.month, day.day, hh, mm,
-                                    tzinfo=dt.timezone.utc)  # page times are UK-local; BBC radio grid is stable enough for a daily refresh
-                stop = start + dt.timedelta(hours=1)  # grid slots are 1h+; next entry defines real end
-                day_progs.append((start, stop, title))
+            day_progs.extend(parse_day(html, day.year))
             time.sleep(0.3)
         if not day_progs:
             continue
-        # sort + set each stop to the next start (real grid end)
-        day_progs.sort()
-        fixed = []
-        for i, (st, sp, ti) in enumerate(day_progs):
-            nsp = day_progs[i + 1][0] if i + 1 < len(day_progs) else st + dt.timedelta(hours=1)
-            fixed.append((st, nsp, ti))
+        fixed = _merge_progs(day_progs)
         out.append('  <channel id={}>\n    <display-name>{}</display-name>\n'
                    '    <display-name>{}</display-name>\n  </channel>\n'
                    .format(quoteattr(stream_name), escape(stream_name), escape(svc)))
-        for st, sp, ti in fixed:
+        for st, nsp, ti in fixed:
             out.append('  <programme start="{} +0000" stop="{} +0000" channel={}>\n'
                        '    <title lang="en">{}</title>\n  </programme>\n'
-                       .format(st.strftime('%Y%m%d%H%M%S'), sp.strftime('%Y%m%d%H%M%S'),
+                       .format(st.strftime('%Y%m%d%H%M%S'), nsp.strftime('%Y%m%d%H%M%S'),
                                quoteattr(stream_name), escape(ti)))
             n_p += 1
     out.append('</tv>\n')

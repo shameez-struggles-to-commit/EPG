@@ -37,7 +37,8 @@ from matcher import SourceIndex, norm, is_non_linear, cyr_to_lat
 
 TIER = {
     'pk': 0, 'iptv-org': 1, 'skyhawk': 2, 'dstv': 2, 'epgone': 2,
-    'bein': 2, 'epgshare01': 3, 'epg.pw': 4, 'provider': 5,
+    'bein': 2, 'teamfixtures': 2, 'allente': 2, 'cyta': 2, 'greek': 2,
+    'plutofast': 2, 'bbcradio': 2, 'epgshare01': 3, 'epg.pw': 4, 'provider': 5,
 }
 
 PK_OVERRIDES = {
@@ -464,7 +465,8 @@ def main():
     def src_tier(s):
         if s.startswith('iptv-org') or s == 'tvepg':
             return TIER['iptv-org']
-        if s in ('skyhawk', 'dstv', 'epgone', 'bein'):
+        if s in ('skyhawk', 'dstv', 'epgone', 'bein', 'teamfixtures',
+                 'allente', 'cyta', 'greek', 'plutofast', 'bbcradio'):
             return TIER[s]
         if s.startswith('epgshare01'):
             return TIER['epgshare01']
@@ -474,6 +476,25 @@ def main():
 
     name_sources = sorted(sources_index, key=src_tier)
     src_idx = {s: rebuild_index(m) for s, m in sources_index.items()}
+
+    # Dedicated-source rescue: a "non-linear" category (24/7 loops, radio) may
+    # still get real EPG from a dedicated fetcher — but ONLY via an exact name
+    # match, and ONLY for that one source. Build a name->source map for streams
+    # that qualify, so the gate below can let them through with candidates
+    # restricted to their dedicated source (no fuzzy, no provider fallback).
+    dedicated_rescue = {}  # stream name -> source name
+    if 'plutofast' in src_idx:
+        for s in streams:
+            nm = (s.get('name') or '').strip()
+            if nm and '24/7' in (s.get('cat_name') or '').lower():
+                if src_idx['plutofast'].exact(nm):
+                    dedicated_rescue[nm] = 'plutofast'
+    if 'bbcradio' in src_idx:
+        for s in streams:
+            nm = (s.get('name') or '').strip()
+            if nm and 'radio' in (s.get('cat_name') or '').lower():
+                if src_idx['bbcradio'].exact(nm):
+                    dedicated_rescue[nm] = 'bbcradio'
 
     prov_by_name = {}
     if args.provider_index:
@@ -487,10 +508,14 @@ def main():
         sid = str(s.get('stream_id', name))
         cat = s.get('cat_name', '')
 
+        # Dedicated-source rescue: a non-linear stream with an exact match in
+        # its dedicated fetcher (plutofast for 24/7, bbcradio for radio) gets
+        # candidates ONLY from that source — no fuzzy, no provider fallback.
+        rescue_src = dedicated_rescue.get(name)
+
         # skip non-linear channels entirely (no EPG applies) — EXCEPT channels
-        # the team-fixture generator explicitly claimed (their category keyword
-        # would otherwise drop them, but their fixtures are real schedule data).
-        if is_non_linear(cat, name) and name not in teams_claim:
+        # the team-fixture generator claimed, or a dedicated source rescued.
+        if is_non_linear(cat, name) and name not in teams_claim and not rescue_src:
             stats['non-linear-skipped'] += 1
             continue
 
@@ -498,6 +523,25 @@ def main():
         allowed_eshare = {f'epgshare01:{f}' for f in COUNTRY_SOURCES.get(cc, [])}
 
         cands = []
+
+        # rescued channels: ONLY the dedicated source, exact match, then skip
+        # all other candidate paths (pk/alias/callsign/provider/fuzzy).
+        if rescue_src:
+            eids = src_idx[rescue_src].exact(name)
+            if eids:
+                cands.append((src_tier(rescue_src), rescue_src, eids[0], 'exact', 0.99))
+                stats[f'{rescue_src}:exact'] += 1
+            if not cands:
+                stats['unmatched'] += 1
+            # write mapping entry directly (or fall through to shared tail)
+            if cands:
+                mapping[sid] = {
+                    'name': name, 'cat_name': cat, 'country': cc,
+                    'canonical_id': canonical_id(s),
+                    'candidates': [{'source': c[1], 'source_id': c[2], 'method': c[3],
+                                    'confidence': c[4]} for c in cands],
+                }
+            continue
 
         # 1. PK override
         if name in PK_OVERRIDES:
