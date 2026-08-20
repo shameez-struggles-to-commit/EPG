@@ -160,6 +160,17 @@ FETCHER_COUNTRIES = {
     'bbcradio': {'UK', 'IE'},                          # radio (name-matched only)
 }
 
+# provider country -> Sky territory prefix, for filtering skyhawk source IDs
+# ("GB#2075" / "DE#9135" / "IT#522"). Mirrors fetch_skyhawk.COUNTRY_TERRITORY.
+# A stream whose territory doesn't match the candidate's prefix must not take
+# that candidate (else UK History gets Italian History — found by AUDIT-3).
+SKY_TERRITORY = {
+    'UK': 'GB', 'GB': 'GB', 'IRE': 'GB', 'IE': 'GB',
+    'DE': 'DE', 'AT': 'DE', 'CH': 'DE',
+    'IT': 'IT',
+    'IN': 'GB', 'PK': 'GB', 'BD': 'GB',
+}
+
 # iptv-org site -> countries it may serve. FIXES the old blanket
 # "iptv-org = India only" gate which silently hid ALL non-India grabber
 # outputs from their own countries' streams (found in the 2026-08-15
@@ -569,6 +580,10 @@ def main():
                     if not diaspora_allowed(src, cc):
                         continue
                 eids = src_idx[src].exact(alias)
+                if src == 'skyhawk':
+                    terr = SKY_TERRITORY.get(cc)
+                    if terr:
+                        eids = [e for e in eids if isinstance(e, str) and e.startswith(terr + '#')]
                 if eids:
                     cands.append((src_tier(src), src, eids[0], 'alias', 0.97))
                     stats['alias'] += 1
@@ -615,6 +630,18 @@ def main():
             elif src == 'greek':
                 qname = greek_q(name)
             eids = src_idx[src].exact(qname)
+            if src == 'skyhawk':
+                # skyhawk source IDs carry a territory prefix ("GB#2075");
+                # keep only candidates whose territory matches this stream's
+                # country (else a UK "History" takes Italian "IT#522").
+                terr = SKY_TERRITORY.get(cc)
+                if terr:
+                    eids = [e for e in eids if isinstance(e, str) and e.startswith(terr + '#')]
+            elif src == 'teamfixtures':
+                # teamfixtures keys channels by the EXACT provider stream name.
+                # norm() strips "tv", so "Real Madrid TV" would collide with the
+                # "Real Madrid" team feed — require the exact claimed name.
+                eids = [e for e in eids if e == name]
             if eids:
                 # classify: 'exact' if the source is allowed for this stream
                 # through its normal gating, else 'diaspora' (exact-match
@@ -646,6 +673,9 @@ def main():
 
         # 4. fuzzy (lowest trust, appended last, country-gated)
         for src in name_sources:
+            if src == 'teamfixtures':
+                continue  # team channels are exact-name only (norm strips "tv",
+                # so fuzzy would claim "Real Madrid TV" for the "Real Madrid" feed)
             if src.startswith('epgshare01') and src not in allowed_eshare:
                 continue
             if src in FETCHER_COUNTRIES and cc and cc not in FETCHER_COUNTRIES[src]:
@@ -660,6 +690,10 @@ def main():
             elif src == 'greek':
                 fq = greek_q(name)
             for sc, cn, cid in src_idx[src].fuzzy(fq, threshold=args.fuzzy_threshold, limit=2):
+                if src == 'skyhawk':
+                    terr = SKY_TERRITORY.get(cc)
+                    if terr and (not isinstance(cid, str) or not cid.startswith(terr + '#')):
+                        continue
                 cands.append((50 + src_tier(src), src, cid, 'fuzzy', round(sc, 2)))
                 stats[f'{src}:fuzzy'] += 1
 

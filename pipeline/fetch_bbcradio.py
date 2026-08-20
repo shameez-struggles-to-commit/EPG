@@ -46,8 +46,9 @@ INDEX_URL = 'https://www.bbc.co.uk/schedules'
 MONTHS = {m: i + 1 for i, m in enumerate(
     ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'])}
 
-# aria-label="19 Aug 06:00: Graham Liver, 19/08/2026" — full local date + time.
-ARIA_RE = re.compile(r'aria-label="(\d{1,2}) (\w{3}) (\d{2}:\d{2}): ([^"]+?), \d{2}/\d{2}/\d{4}"')
+# aria-label="19 Aug 06:00: Graham Liver, 19/08/2026" — the trailing DD/MM/YYYY
+# carries the TRUE year (a Dec page can contain Jan anchors = next year).
+ARIA_RE = re.compile(r'aria-label="(\d{1,2}) (\w{3}) (\d{2}:\d{2}): ([^"]+?), (\d{2})/(\d{2})/(\d{4})"')
 PID_RE = re.compile(r'href="/schedules/(p00[a-z0-9]{5})"[^>]*>\s*'
                     r'<div class="sch-network-name[^"]*">([^<]+)</div>')
 
@@ -96,28 +97,27 @@ def radio_services():
 def parse_day(html, year):
     """Return [(aware_datetime_utc, title)] parsed from a schedule day page.
 
-    The aria-label carries the FULL local date+time ("19 Aug 06:00: ..."),
-    so we derive the true local datetime from it (not the page URL, which is
-    wrong for cross-midnight programmes), attach Europe/London (BST-aware),
-    convert to UTC, and dedupe identical anchors the page sometimes repeats.
+    The aria-label carries the FULL local date+time AND a trailing DD/MM/YYYY
+    with the true year ("19 Aug 06:00: ... , 19/08/2026"). We use that year
+    (not the page URL's year) so a December page containing "01 Jan" anchors
+    correctly assigns next year. Attach Europe/London (BST-aware), convert to
+    UTC, and dedupe identical anchors the page sometimes repeats.
     """
     seen = set()
     progs = []
-    for dstr, mon, tm, title in ARIA_RE.findall(html or ''):
+    for dstr, mon, tm, title, dd, mm, yyyy in ARIA_RE.findall(html or ''):
         day = int(dstr)
         mo = MONTHS.get(mon[:3])
         if mo is None:
             continue
-        hh, mm = int(tm[:2]), int(tm[3:5])
-        key = (day, mo, tm, title.strip())
+        y = int(yyyy)
+        hh, mm2 = int(tm[:2]), int(tm[3:5])
+        key = (y, mo, day, tm, title.strip())
         if key in seen:
             continue
         seen.add(key)
-        # BBC schedules span the Dec->Jan boundary; if the page is for Dec but
-        # an anchor says Jan 1, it's next year.
-        y = year if not (mo == 1 and year and dstr != '01' and mo < 3) else year
         try:
-            local = dt.datetime(y, mo, day, hh, mm, tzinfo=LONDON)
+            local = dt.datetime(y, mo, day, hh, mm2, tzinfo=LONDON)
         except ValueError:
             continue
         progs.append((local.astimezone(dt.timezone.utc), title.strip()))
