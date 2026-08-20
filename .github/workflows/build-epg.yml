@@ -8,6 +8,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# AUDIT-4 F-02/F-12: one build at a time; a queued (older) run is cancelled so
+# a slow stale build can never publish over a newer one.
+concurrency:
+  group: epg-build
+  cancel-in-progress: true
+
 permissions:
   contents: write
   pages: write
@@ -38,7 +44,18 @@ jobs:
           IPTV_SERVER: ${{ secrets.IPTV_SERVER }}
           IPTV_USER: ${{ secrets.IPTV_USER }}
           IPTV_PASS: ${{ secrets.IPTV_PASS }}
-        run: python3 pipeline/fetch_provider.py ./data
+        run: |
+          python3 pipeline/fetch_provider.py ./data
+          # AUDIT-4 F-02: reject an unexplained near-empty/truncated lineup.
+          python3 - <<'PYEOF'
+          import json, sys
+          streams = json.load(open('data/streams.json'))
+          n = len(streams)
+          print(f'provider streams: {n}')
+          if n < 5000:
+              print(f'FAIL: provider lineup implausibly small ({n} < 5000)')
+              sys.exit(1)
+          PYEOF
 
       - name: Run PK scrapers (Pakistan)
         run: python3 scrapers/pk_scrapers.py ./data/pk_epg.json || echo "PK scraper(s) failed — see alert step"
@@ -103,15 +120,46 @@ jobs:
           done
 
           # --- custom fetchers (background; only need streams.json) ---
+          # AUDIT-4 F-02: bare `wait` returned 0 even when a child failed.
+          # Capture PIDs and check each exit code; REQUIRED fetchers fail the
+          # build; optional ones log loudly. epg.one is optional (bonus CIS
+          # source; its mirrors are flaky by nature).
           cd "$WS"
-          python3 pipeline/fetch_skyhawk.py data/streams.json data/skyhawk.xml --days 2 &
-          python3 pipeline/fetch_dstv.py data/dstv.xml --days 2 &
-          (python3 pipeline/fetch_epgone.py data/epgone_cis.xml data/streams.json || echo "epg.one fetch failed (non-fatal: UA/MD bonus source)") &
-          python3 pipeline/fetch_allente.py data/allente.xml --days 2 &
-          python3 pipeline/fetch_teamfixtures.py data/streams.json data/teamfixtures.xml data/teams_claim.json data/teams_status.json &
-          python3 pipeline/fetch_bbcradio.py data/streams.json data/bbcradio.xml data/bbc_status.json --days 2 &
+          declare -A FETCH_PID FETCH_NAME FETCH_REQ
+          run_fetch() {  # name, required(0/1), cmd...
+            local name="$1"; local req="$2"; shift 2
+            "$@" & FETCH_PID[$!]=$name; FETCH_REQ[$name]=$req; FETCH_NAME[$!]=$name
+          }
+          run_fetch skyhawk   1 python3 pipeline/fetch_skyhawk.py data/streams.json data/skyhawk.xml --days 2
+          run_fetch dstv      1 python3 pipeline/fetch_dstv.py data/dstv.xml --days 2
+          run_fetch epgone    0 python3 pipeline/fetch_epgone.py data/epgone_cis.xml data/streams.json
+          run_fetch allente   1 python3 pipeline/fetch_allente.py data/allente.xml --days 2
+          run_fetch teamfix   1 python3 pipeline/fetch_teamfixtures.py data/streams.json data/teamfixtures.xml data/teams_claim.json data/teams_status.json
+          run_fetch bbcradio  1 python3 pipeline/fetch_bbcradio.py data/streams.json data/bbcradio.xml data/bbc_status.json --days 2
 
-          wait
+          # iptv-org grabs keep their own loop above; wait everything else,
+          # then verify the custom fetchers by PID.
+          FAIL=0
+          for pid in "${!FETCH_PID[@]}"; do
+            if ! wait "$pid"; then
+              name="${FETCH_PID[$pid]}"
+              if [ "${FETCH_REQ[$name]}" = "1" ]; then
+                echo "REQUIRED fetcher failed: $name (pid $pid)"; FAIL=1
+              else
+                echo "optional fetcher failed: $name (non-fatal)"
+              fi
+            fi
+          done
+          [ "$FAIL" = "0" ] || { echo "failing build: required fetcher(s) exited non-zero"; exit 1; }
+
+          # required OUTPUT validation: exit 0 + non-empty valid XMLTV file
+          for f in skyhawk.xml dstv.xml allente.xml teamfixtures.xml bbcradio.xml; do
+            p="data/$f"
+            if [ ! -s "$p" ] || ! grep -q '<tv' "$p"; then
+              echo "REQUIRED fetcher output missing/invalid: $p"; FAIL=1
+            fi
+          done
+          [ "$FAIL" = "0" ] || exit 1
           echo "=== grab outputs ==="
           ls -la "$WS/data/io_*.xml" | head -50
           # sanity check: warn (non-fatal) about missing/empty grab outputs
@@ -133,6 +181,48 @@ jobs:
           TEAMS_FILE: "data/teamfixtures.xml"
           BBCRADIO_FILE: "data/bbcradio.xml"
         run: python3 pipeline/fetch_sources.py ./data
+
+      - name: "Required-source gate (fail-closed)"
+        run: |
+          python3 - <<'PYEOF'
+          import json, os, gzip, re, sys
+          # AUDIT-4 F-02: a missing/empty source previously produced a
+          # "successful" manifest. Required sources must exist, be non-empty,
+          # parse, and carry programmes; a failure here stops the deploy.
+          REQUIRED = {
+              'epgpw_global.xml.gz':   ('epg.pw', 100),        # (file, min channels)
+              'es_US_LOCALS1.xml.gz': ('epgshare01 US locals', 100),
+              'es_UK1.xml.gz':        ('epgshare01 UK', 10),
+          }
+          # key source-index entries that MUST be present after indexing
+          REQUIRED_SOURCES = ['epg.pw', 'skyhawk', 'tvepg']
+          data = 'data'
+          failures = []
+          for fname, (label, min_ch) in REQUIRED.items():
+              p = os.path.join(data, fname)
+              if not os.path.exists(p) or os.path.getsize(p) == 0:
+                  failures.append(f'{label}: file missing/empty ({fname})'); continue
+              try:
+                  txt = gzip.open(p, 'rt', errors='ignore').read()
+                  n = len(re.findall(r'<channel ', txt))
+                  pr = len(re.findall(r'<programme', txt))
+                  if n < min_ch or pr == 0:
+                      failures.append(f'{label}: only {n} channels / {pr} programmes (<{min_ch})')
+                  else:
+                      print(f'OK {label}: {n} channels, {pr} programmes')
+              except Exception as e:
+                  failures.append(f'{label}: unreadable ({e})')
+          idx = json.load(open(os.path.join(data, 'sources_index.json')))
+          for s in REQUIRED_SOURCES:
+              if s not in idx or not idx[s]:
+                  failures.append(f'source index missing: {s}')
+              else:
+                  print(f'OK source index: {s} ({len(idx[s])} names)')
+          if failures:
+              print('\n'.join('FAIL ' + f for f in failures))
+              sys.exit(1)
+          print('required-source gate passed')
+          PYEOF
 
       - name: Build mapping (fallback cascade + country gating + call signs)
         run: |
@@ -249,16 +339,35 @@ jobs:
   health:
     runs-on: ubuntu-latest
     if: github.event_name == 'schedule'
-    needs: build
+    needs: [build, deploy]
     steps:
-      - name: Check deployed guide
+      - name: Check deployed guide (fail on non-200/invalid)
         run: |
           URL="https://${{ github.repository_owner }}.github.io/EPG/guide.xml.gz"
-          STATUS=$(curl -sI -o /dev/null -w "%{http_code}" "$URL")
-          SIZE=$(curl -s -o /dev/null -w "%{size_download}" "$URL")
+          STATUS=$(curl -sIL -o /dev/null -w "%{http_code}" "$URL")
+          SIZE=$(curl -sL -o /tmp/guide.gz -w "%{size_download}" "$URL")
           echo "Guide URL: $URL"
-          echo "Status: $STATUS"
-          echo "Size: $SIZE bytes"
+          echo "Status: $STATUS | Size: $SIZE bytes"
+          # AUDIT-4 F-02: health must ASSERT, not just print.
+          if [ "$STATUS" != "200" ]; then echo "FAIL: HTTP $STATUS (expected 200)"; exit 1; fi
+          if [ "$SIZE" -lt 1000000 ]; then echo "FAIL: guide implausibly small ($SIZE bytes)"; exit 1; fi
+          python3 - <<'PYEOF'
+          import gzip, re, sys, datetime
+          d = gzip.open('/tmp/guide.gz','rt',errors='ignore').read()
+          chans = len(re.findall(r'<channel ', d))
+          progs = len(re.findall(r'<programme', d))
+          print(f'deployed guide: {chans} channels, {progs} programmes')
+          if chans < 1500 or progs < 100000:
+              print('FAIL: deployed guide below minimums'); sys.exit(1)
+          # current-data check: at least one programme must stop today or later
+          today = datetime.date.today().strftime('%Y%m%d')
+          import re as _re
+          stops = _re.findall(r'stop="(\d{8})', d)
+          if not stops or max(stops) < today:
+              print(f'FAIL: no current programmes (max stop {max(stops) if stops else "none"} < {today})')
+              sys.exit(1)
+          print(f'OK: current data present (max stop {max(stops)})')
+          PYEOF
 
       - name: Daily health ping (ntfy)
         if: github.run_attempt == 1

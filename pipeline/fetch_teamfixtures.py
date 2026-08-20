@@ -138,7 +138,10 @@ def sdb_events(lid, season):
         dates = sorted(set(e.get('dateEvent') or '' for e in evs if e.get('dateEvent')))
         for e in evs:
             de = e.get('dateEvent') or ''
-            if de >= today.isoformat():
+            # per-event horizon bound: a round can span the horizon boundary
+            # (one in-window event + later out-of-window events in the same
+            # round); only in-window events belong (AUDIT-4: 80 leaked).
+            if today.isoformat() <= de <= horizon.isoformat():
                 seen[(e.get('idEvent'), de)] = e
         if dates and dates[0] > horizon.isoformat():
             break  # this round is entirely beyond the horizon

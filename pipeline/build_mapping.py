@@ -171,6 +171,12 @@ SKY_TERRITORY = {
     'IN': 'GB', 'PK': 'GB', 'BD': 'GB',
 }
 
+# provider country -> Allente feed prefix ("dk:30001" / "no:50047" / "fi:40051").
+# The allente source merges DK/NO/FI feeds under one index; duplicate names
+# across feeds (e.g. "V Sport 1" exists in all three) resolve by prefix.
+# AUDIT-4: Norwegian V Sport 1 was selecting the Finnish fi:40051 feed.
+ALLENTE_PREFIX = {'DK': 'dk', 'NO': 'no', 'FI': 'fi', 'SE': 'se'}
+
 # iptv-org site -> countries it may serve. FIXES the old blanket
 # "iptv-org = India only" gate which silently hid ALL non-India grabber
 # outputs from their own countries' streams (found in the 2026-08-15
@@ -267,6 +273,57 @@ def canonical_id(stream):
     if is_real_epg_id(eid):
         return eid
     return stream.get('name', '')
+
+
+def build_collision_split(streams):
+    """AUDIT-4 F-01: duplicated provider epg_channel_ids merge unrelated
+    streams into one XMLTV channel (325 collision IDs / 882 streams deployed,
+    incl. discoverychannel.de x38 across 9 countries).
+
+    Return {stream_name: replacement_cid}. For each real provider epg_id used
+    by N>1 streams, ONE keeper keeps the shared id; every other stream is
+    split onto its own stable synthetic id 'xtream:<stream_id>' (immutable
+    across panel renames; empty/junk-id streams were ALREADY name-keyed, the
+    rename-churn risk is unchanged for them).
+
+    Keeper rule: the stream whose normalized name matches the id's tail best
+    (e.g. discoverychannel.de keeper = the actual Discovery Channel DE
+    stream, not Auto Motor Sport). Ties -> lowest stream_id (deterministic).
+    """
+    from collections import defaultdict
+    by_eid = defaultdict(list)
+    for s in streams:
+        eid = (s.get('epg_channel_id') or '').strip()
+        if is_real_epg_id(eid):
+            by_eid[eid].append(s)
+
+    def id_tail_norm(eid):
+        tail = eid.rsplit('.', 1)[-1] if '.' in eid else eid
+        return norm(tail)
+
+    split = {}
+    for eid, group in by_eid.items():
+        if len(group) < 2:
+            continue
+        tail = id_tail_norm(eid)
+        # keeper = best normalized-name match against the id tail; tie -> lowest stream_id
+        def keeper_key(s):
+            nm = norm(s.get('name', '') or '')
+            score = 2 if nm == tail else (1 if tail and (tail in nm or nm in tail) else 0)
+            try:
+                sid_n = int(s.get('stream_id') or 0)
+            except (TypeError, ValueError):
+                sid_n = 0
+            return (-score, sid_n)
+        group_sorted = sorted(group, key=keeper_key)
+        keeper = group_sorted[0]
+        for s in group_sorted[1:]:
+            try:
+                sid = str(int(s.get('stream_id') or 0))
+            except (TypeError, ValueError):
+                sid = '0'
+            split[s.get('name', '')] = f'xtream:{sid}'
+    return split
 
 
 def country_hint(cat_name):
@@ -514,6 +571,12 @@ def main():
 
     mapping = {}
     stats = defaultdict(int)
+    # AUDIT-4 F-01: split duplicated provider epg_ids onto stable synthetic
+    # xtream:<stream_id> ids so unrelated streams stop merging into one
+    # XMLTV channel (882 streams were affected).
+    collision_split = build_collision_split(streams)
+    stats['collision-split-streams'] = len(collision_split)
+    print(f'[mapping] collision split: {len(collision_split)} streams -> xtream:<stream_id>')
     for s in streams:
         name = s.get('name', '')
         sid = str(s.get('stream_id', name))
@@ -548,7 +611,7 @@ def main():
             if cands:
                 mapping[sid] = {
                     'name': name, 'cat_name': cat, 'country': cc,
-                    'canonical_id': canonical_id(s),
+                    'canonical_id': collision_split.get(name) or canonical_id(s),
                     'candidates': [{'source': c[1], 'source_id': c[2], 'method': c[3],
                                     'confidence': c[4]} for c in cands],
                 }
@@ -637,6 +700,12 @@ def main():
                 terr = SKY_TERRITORY.get(cc)
                 if terr:
                     eids = [e for e in eids if isinstance(e, str) and e.startswith(terr + '#')]
+            elif src == 'allente':
+                # allente merges DK/NO/FI feeds with country-prefixed IDs
+                # ("no:50047"); keep only this stream's country feed.
+                pref = ALLENTE_PREFIX.get(cc)
+                if pref:
+                    eids = [e for e in eids if isinstance(e, str) and e.startswith(pref + ':')]
             elif src == 'teamfixtures':
                 # teamfixtures keys channels by the EXACT provider stream name.
                 # norm() strips "tv", so "Real Madrid TV" would collide with the
@@ -661,15 +730,38 @@ def main():
                 stats[f'{src}:{method}'] += 1
 
         # 3. provider (epg_channel_id then display-name)
-        if is_real_epg_id(s.get('epg_channel_id')):
-            cands.append((TIER['provider'], 'provider', str(s['epg_channel_id']).strip(),
-                          'epg-id', 1.0))
+        # AUDIT-4 F-03: a valid provider epg-id is the HIGHEST-trust identity
+        # signal — it outranks name-based sources (the old tier put broad
+        # epg.pw above the provider's own explicit id, letting a generic
+        # name-match schedule beat the provider's actual feed). Tier 1.5:
+        # below pk overrides, above every name source. Also: streams whose
+        # provider id is a COLLISION id (split onto xtream:<sid>) must not
+        # ALSO emit the shared id as a candidate.
+        prov_cid = str(s.get('epg_channel_id') or '').strip()
+        if is_real_epg_id(prov_cid) and name not in collision_split:
+            cands.append((1.5, 'provider', prov_cid, 'epg-id', 1.0))
             stats['provider:epg-id'] += 1
+        elif is_real_epg_id(prov_cid) and name in collision_split:
+            # split stream: the shared id belongs to the keeper; this stream
+            # still benefits from the provider feed but must select through
+            # name candidates like any other name-keyed channel.
+            stats['provider:epg-id-split'] += 1
         else:
             pn = norm(name)
             if pn and pn in prov_by_name:
-                cands.append((TIER['provider'], 'provider', prov_by_name[pn], 'name', 0.9))
-                stats['provider:name'] += 1
+                # AUDIT-4 F-03: provider-name fallback was NOT country-gated;
+                # 'FOX SPORTS 2' in ES/BR categories took foxsports2.us.
+                # Gate on the id's TLD suffix agreeing with the stream country
+                # (when both are known) before accepting the fallback.
+                cand_cid = prov_by_name[pn]
+                tld = cand_cid.rsplit('.', 1)[-1].upper() if '.' in cand_cid else None
+                cc_norm = {'UK': 'GB', 'IRE': 'IE', 'SC': 'GB', 'USA': 'US'}.get(cc, cc)
+                tld_ok = (tld is None) or (tld == cc_norm) or (cc_norm is None)
+                if tld_ok:
+                    cands.append((TIER['provider'], 'provider', cand_cid, 'name', 0.9))
+                    stats['provider:name'] += 1
+                else:
+                    stats['provider:name-country-rejected'] += 1
 
         # 4. fuzzy (lowest trust, appended last, country-gated)
         for src in name_sources:
@@ -694,6 +786,10 @@ def main():
                     terr = SKY_TERRITORY.get(cc)
                     if terr and (not isinstance(cid, str) or not cid.startswith(terr + '#')):
                         continue
+                if src == 'allente':
+                    pref = ALLENTE_PREFIX.get(cc)
+                    if pref and (not isinstance(cid, str) or not cid.startswith(pref + ':')):
+                        continue
                 cands.append((50 + src_tier(src), src, cid, 'fuzzy', round(sc, 2)))
                 stats[f'{src}:fuzzy'] += 1
 
@@ -717,7 +813,7 @@ def main():
             'name': name,
             'cat_name': cat,
             'country': cc,
-            'canonical_id': canonical_id(s),
+            'canonical_id': collision_split.get(name) or canonical_id(s),
             'candidates': [{'source': c[1], 'source_id': c[2], 'method': c[3],
                             'confidence': c[4]} for c in dedup],
         }

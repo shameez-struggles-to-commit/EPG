@@ -20,6 +20,7 @@ Inputs (see workflow):
 import argparse
 import datetime as dt
 import gzip
+import html
 import json
 import os
 import re
@@ -140,9 +141,22 @@ def parse_xmltv(path, needed_ids, min_stop=None):
         t = TITLE_RE.search(body)
         d = DESC_RE.search(body)
         c = CAT_RE.search(body)
+        # Decode XML entities ONCE here: upstream feeds ship pre-escaped text
+        # ("Dragons&apos; Den"); capturing it raw and escaping again at write
+        # time double-escaped it ("&amp;apos;" — AUDIT-4: 49,645 deployed
+        # titles). Decode now, escape once at write. A bounded second pass
+        # handles feeds that double-encode ("&amp;amp;" -> "&" twice).
+        def _decode(txt):
+            if not txt:
+                return txt
+            once = html.unescape(txt)
+            if re.search(r'&[a-zA-Z]+;|&#\d+;', once):
+                return html.unescape(once)
+            return once
         progs[ch].append((st, sp,
-                          t.group(1) if t else '', d.group(1) if d else '',
-                          c.group(1) if c else ''))
+                          _decode(t.group(1)) if t else '',
+                          _decode(d.group(1)) if d else '',
+                          _decode(c.group(1)) if c else ''))
     if n_stale:
         print(f'[currency] {os.path.basename(path)}: dropped {n_stale} stale programmes')
     return channels, progs
@@ -278,6 +292,19 @@ def main():
                 bad_intervals += 1
                 continue
             if nsp <= nst:
+                bad_intervals += 1
+                continue
+            # reject implausible records: a programme whose span start->stop
+            # exceeds 31 days (stale/open-ended upstream placeholder, e.g.
+            # 2020 start / 2099 stop — AUDIT-4 F-04). Legit long-running loops
+            # are shorter; 24/7 loops carry per-episode entries.
+            nst_d, nsp_d = nst[:8], nsp[:8]
+            try:
+                span_days = (dt.date(int(nsp_d[:4]), int(nsp_d[4:6]), int(nsp_d[6:8]))
+                             - dt.date(int(nst_d[:4]), int(nst_d[4:6]), int(nst_d[6:8]))).days
+            except ValueError:
+                span_days = None
+            if span_days is not None and span_days > 31:
                 bad_intervals += 1
                 continue
             key = (nst, cid)
