@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<channels>
+  <channel site="tv24.co.uk" site_id="92-news" lang="en" xmltv_id="">92 News</channel>
+  <channel site="tv24.co.uk" site_id="dunya-news" lang="en" xmltv_id="">Dunya News</channel>
+  <channel site="tv24.co.uk" site_id="geo-entertainment" lang="en" xmltv_id="">GEO Entertainment</channel>
+  <channel site="tv24.co.uk" site_id="geo-news" lang="en" xmltv_id="">Geo News</channel>
+  <channel site="tv24.co.uk" site_id="geo-tv" lang="en" xmltv_id="">GEO TV</channel>
+  <channel site="tv24.co.uk" site_id="hum-europe" lang="en" xmltv_id="">HUM Europe</channel>
+  <channel site="tv24.co.uk" site_id="hum-europe-1" lang="en" xmltv_id="">HUM Europe</channel>
+  <channel site="tv24.co.uk" site_id="hum-masala-europe" lang="en" xmltv_id="">HUM Masala (Europe)</channel>
+  <channel site="tv24.co.uk" site_id="islam-channel-urdu" lang="en" xmltv_id="">Islam Channel Urdu</channel>
+  <channel site="tv24.co.uk" site_id="samaa" lang="en" xmltv_id="">Samaa</channel>
+  <channel site="tv24.co.uk" site_id="samaa-tv" lang="en" xmltv_id="">Samaa TV</channel>
+  <channel site="tv24.co.uk" site_id="tv-one" lang="en" xmltv_id="">TV One</channel>
+</channels>

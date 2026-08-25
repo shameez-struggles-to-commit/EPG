@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<channels>
+  <channel site="epg.112114.xyz" site_id="CCTV4" lang="zh" xmltv_id="">CCTV4</channel>
+  <channel site="epg.112114.xyz" site_id="CCTV4K" lang="zh" xmltv_id="">CCTV4K</channel>
+  <channel site="epg.112114.xyz" site_id="HBO" lang="zh" xmltv_id="">HBO</channel>
+</channels>

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<channels>
+  <channel site="gigatv.3bbtv.co.th" site_id="2" lang="th" xmltv_id="">NBT</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="5" lang="th" xmltv_id="">TV5 HD</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="7" lang="th" xmltv_id="TSports7.th@SD">T Sports 7</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="22" lang="th" xmltv_id="NationTV.th@SD">Nation TV</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="25" lang="th" xmltv_id="GMM25.th@SD">GMM 25</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="29" lang="th" xmltv_id="MONO29.th@SD">Mono 29</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="30" lang="th" xmltv_id="MCOTHD.th@SD">MCOT HD</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="31" lang="th" xmltv_id="">ONE31 HD</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="103" lang="th" xmltv_id="">HBO</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="104" lang="th" xmltv_id="">HBO Signature</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="107" lang="th" xmltv_id="">Cinemax</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="109" lang="th" xmltv_id="">Mono29 Plus</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="110" lang="th" xmltv_id="">Warner TV</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="205" lang="th" xmltv_id="">Food Network</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="206" lang="th" xmltv_id="">Asian Food Network</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="210" lang="th" xmltv_id="">TLC</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="301" lang="th" xmltv_id="">Cartoon Network</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="302" lang="th" xmltv_id="">Cartoonito</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="303" lang="th" xmltv_id="">Nickelodeon</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="304" lang="th" xmltv_id="">Nick Jr.</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="503" lang="th" xmltv_id="">Discovery Channel</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="504" lang="th" xmltv_id="">Animal Planet</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="505" lang="th" xmltv_id="">Discovery Asia</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="601" lang="th" xmltv_id="">BBC News</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="603" lang="th" xmltv_id="">Bloomberg</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="605" lang="th" xmltv_id="">CCTV 4</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="608" lang="th" xmltv_id="">NHK WORLD-JAPAN</channel>
+  <channel site="gigatv.3bbtv.co.th" site_id="716" lang="th" xmltv_id="ETV.th@SD">ETV</channel>
+</channels>

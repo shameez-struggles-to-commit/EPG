@@ -1,0 +1,284 @@
+====================================================================================================
+ALL iptv-org REGISTRIES x 60 uncovered PK names
+====================================================================================================
+
+'8XM' (norm='8 xm') -> NOT IN ANY iptv-org REGISTRY
+
+'A Plus' (norm='a plus')
+    EXACT  canalplus.com                'et#131001'            'A PLUS TV'
+
+'A Sports FHD' (norm='a sports')
+    TYPO   epg.iptvx.one                'a-spor-tr'            'A Spor HD'
+    TYPO   tvprofil.com                 'bg/tv-programa#a-spor' 'A Spor'
+
+'A Sports HD' (norm='a sports')
+    TYPO   epg.iptvx.one                'a-spor-tr'            'A Spor HD'
+    TYPO   tvprofil.com                 'bg/tv-programa#a-spor' 'A Spor'
+
+'A Sports SD' (norm='a sports')
+    TYPO   epg.iptvx.one                'a-spor-tr'            'A Spor HD'
+    TYPO   tvprofil.com                 'bg/tv-programa#a-spor' 'A Spor'
+
+'AVT Khyber' (norm='avt khyber') -> NOT IN ANY iptv-org REGISTRY
+
+'Aaj News' (norm='aaj news')
+    TYPO   tvprofil.com                 'me/tvprogram#fax-news' 'FAX News'
+    TYPO   tvprofil.com                 'al/programacioni#fax-news' 'FAX News'
+    TYPO   epgshare01.online            'MT1#Rai.News.mt'      'Rai News'
+    TYPO   melita.com                   'd47d3ca9-4d06-4805-9833-351cc69a0395' 'Rai News'
+    TYPO   epgshare01.online            'CA1#ABP.News.ca'      'ABP News'
+    TYPO   epgshare01.online            'IN4#ABP.NEWS.in'      'ABP NEWS'
+
+'Abb Takk' (norm='abb takk') -> NOT IN ANY iptv-org REGISTRY
+
+'Apna Channel' (norm='apna') -> NOT IN ANY iptv-org REGISTRY
+
+'Astro Sports' (norm='astro sports')
+    EXACT  epg.iptvx.one                'astro-supersport-uhd' 'Astro Sports UHD'
+    EXACT  epgshare01.online            'MY1#Astro.Sports.UHD.my' 'Astro Sports UHD'
+
+'Bol Entertainment' (norm='bol entertainment')
+    TYPO   epgshare01.online            'MT1#BBC.Entertainment.mt' 'BBC Entertainment'
+    TYPO   epgshare01.online            'CY1#BBC.Entertainment.HD.cy' 'BBC Entertainment HD'
+
+'Bol News' (norm='bol news')
+    TYPO   tivu.tv                      '38'                   'BBC News'
+    TYPO   pluto.tv                     '65d92a8c8b24c80008e285c0' 'BBC News'
+    TYPO   epg.iptvx.one                'fox-news-us'          'Fox News'
+    TYPO   tv.movistar.com.pe           'lch2305'              'FOX NEWS'
+    TYPO   tvprofil.com                 'me/tvprogram#top-news' 'Top News'
+    TYPO   tvprofil.com                 'mk/tv-raspored#top-news' 'Top News'
+
+'Channel Five' (norm='five')
+    EXACT  epgshare01.online            'CH1#Five.ch'          'Five'
+
+'City 41' (norm='city 41') -> NOT IN ANY iptv-org REGISTRY
+
+'Dawn News' (norm='dawn news')
+    TYPO   epgshare01.online            'CA1#ATN.-.News.ca'    'ATN - News'
+    TYPO   epgshare01.online            'ASIANTELEVISION1#ATN.News.dk' 'ATN News'
+    TYPO   epgshare01.online            'US1#AFN.news.us'      'AFN news'
+    TYPO   v3.myafn.dodmedia.osd.mil    '5'                    'AFN|news'
+    TYPO   tataplay.com                 '286'                  'APN News'
+    TYPO   sat.tv                       '8#62#Dash News'       'Dash News'
+
+'Discover Pakistan' (norm='discover pakistan') -> NOT IN ANY iptv-org REGISTRY
+
+'Duniya News' (norm='duniya news')
+    TYPO   epgshare01.online            'UK1#Dunya.News.uk'    'Dunya News'
+    TYPO   tv24.co.uk                   'dunya-news'           'Dunya News'
+
+'EAwaz TV' (norm='eawaz') -> NOT IN ANY iptv-org REGISTRY
+
+'Eternal Life TV Network' (norm='eternal life') -> NOT IN ANY iptv-org REGISTRY
+
+'Fazal TV' (norm='fazal') -> NOT IN ANY iptv-org REGISTRY
+
+'Film World' (norm='film world')
+    TYPO   ipko.tv                      'gold-hd'              'Film Gold'
+
+'Filmax' (norm='filmax')
+    EXACT  tvprofil.com                 'bg/tv-programa#filmax' 'Filmax'
+    EXACT  tvprofil.com                 'ba/tvprogram#filmax'  'Filmax'
+
+'FilmaxCinema' (norm='filmaxcinema') -> NOT IN ANY iptv-org REGISTRY
+
+'Gawahi TV' (norm='gawahi') -> NOT IN ANY iptv-org REGISTRY
+
+'Geo Super' (norm='geo super') -> NOT IN ANY iptv-org REGISTRY
+
+'Geo Tez' (norm='geo tez') -> NOT IN ANY iptv-org REGISTRY
+
+'Gourmet News Network (GNN)' (norm='gourmet news gnn') -> NOT IN ANY iptv-org REGISTRY
+
+'Hadi TV 1' (norm='hadi 1')
+    TYPO   tivu.tv                      '42'                   'Rai 1 HD'
+    TYPO   epgshare01.online            'IT1#Rai1.it'          'Rai1'
+    TYPO   epgshare01.online            'FR1#Medi1TV.fr'       'Medi1TV'
+    TYPO   tv.sfr.fr                    '665'                  'Medi 1 TV'
+    TYPO   epgshare01.online            'FR1#SAUDI.CHANNEL.1.fr' 'SAUDI CHANNEL 1'
+    TYPO   tv.sfr.fr                    '1733'                 'Saudi Channel 1'
+
+'Hadi TV 2' (norm='hadi 2')
+    TYPO   tivu.tv                      '43'                   'Rai 2 HD'
+    TYPO   epgshare01.online            'IT1#Rai2.it'          'Rai2'
+    TYPO   vrt.be                       'radio2'               'Radio 2'
+    TYPO   sat.tv                       '1#33#Radio 2'         'Radio 2'
+
+'Hadi TV 3' (norm='hadi 3')
+    TYPO   tivu.tv                      '44'                   'Rai 3 HD'
+    TYPO   epgshare01.online            'IT1#Rai3.it'          'Rai3'
+    TYPO   sky.com                      'DE#1485'              'radio3'
+
+'Hadi TV 4' (norm='hadi 4')
+    TYPO   tivu.tv                      '89'                   'Rai 4 HD'
+    TYPO   tvprofil.com                 'ch/tv-programm#rai-4' 'RAI 4'
+    TYPO   epgshare01.online            'DK1#RADIO4.dk'        'RADIO4'
+    TYPO   sat.tv                       '8#62#HMD4'            'HMD4'
+    TYPO   sat.tv                       '8#63#HMD4'            'HMD4'
+
+'Hadi TV 6' (norm='hadi 6') -> NOT IN ANY iptv-org REGISTRY
+
+'Hum Sitaray' (norm='hum sitaray')
+    EXACT  streamingtvguides.com        'HUMST'                'Hum Sitaray'
+
+'Isaac TV' (norm='isaac') -> NOT IN ANY iptv-org REGISTRY
+
+'Jalwa' (norm='jalwa') -> NOT IN ANY iptv-org REGISTRY
+
+'Joo Music' (norm='joo music')
+    TYPO   epg.iptvx.one                'box-music-4k'         'BOX Music 4K'
+    TYPO   epgshare01.online            'SA2#en##Music.Now.sa' 'Music Now'
+    TYPO   epgshare01.online            'SA1#Music.Now.sa'     'Music Now'
+    TYPO   epgshare01.online            'PL1#Music.Box.HD.pl'  'Music Box HD'
+    TYPO   epgshare01.online            'PL1#Music.Box.pl'     'Music Box'
+    TYPO   epgshare01.online            'PL1#VOX.Music.TV.pl'  'VOX Music TV'
+
+'KTN' (norm='ktn')
+    EXACT  epgshare01.online            'KE1#KTN.ke'           'KTN'
+    EXACT  ontvtonight.com              'us#69035050/ktn'      'KTN'
+
+'KTN News' (norm='ktn news')
+    TYPO   tvprofil.com                 'ie/tvschedule#rte-news' 'RTÉ News'
+    TYPO   mytelly.co.uk                '1650/rte-news'        'RTE News'
+    TYPO   plex.tv                      '6685c1a1b53e3bc0fd169e1d' 'CTV News'
+    TYPO   epgshare01.online            'CA1#CTV.News.Channel.ca' 'CTV News Channel'
+    TYPO   epgshare01.online            'DISTROTV1#NTD.News.distro' 'NTD News'
+    TYPO   distro.tv                    '119339'               'NTD News'
+
+'Kay 2' (norm='kay 2')
+    TYPO   tivu.tv                      '43'                   'Rai 2 HD'
+    TYPO   epgshare01.online            'IT1#Rai2.it'          'Rai2'
+    TYPO   epg.iptvx.one                'raz2'                 'RAZ 2'
+    TYPO   epgshare01.online            'DK1#TV2OJy.dk'        'TV2OJy'
+    TYPO   epgshare01.online            'DK1#tv2play.dk'       'tv2play'
+    TYPO   epgshare01.online            'SA2#en##KTV2.HD.sa'   'KTV2 HD'
+
+'Khyber News' (norm='khyber news') -> NOT IN ANY iptv-org REGISTRY
+
+'King TV' (norm='king')
+    EXACT  ontvtonight.com              'ca#69048827/king'     'KING'
+    EXACT  ontvtonight.com              'us#69048827/king'     'KING'
+
+'Kohenoor News' (norm='kohenoor news') -> NOT IN ANY iptv-org REGISTRY
+
+'Lahore News' (norm='lahore news') -> NOT IN ANY iptv-org REGISTRY
+
+'Lahore Rang' (norm='lahore rang') -> NOT IN ANY iptv-org REGISTRY
+
+'Madani Channel Urdu' (norm='madani urdu') -> NOT IN ANY iptv-org REGISTRY
+
+'Mission Asia' (norm='mission asia') -> NOT IN ANY iptv-org REGISTRY
+
+'Neo TV' (norm='neo') -> NOT IN ANY iptv-org REGISTRY
+
+'News One' (norm='news one')
+    TYPO   tvprofil.com                 'ie/tvschedule#rte-news' 'RTÉ News'
+    TYPO   mytelly.co.uk                '1650/rte-news'        'RTE News'
+    TYPO   tvprofil.com                 'me/tvprogram#ora-news' 'Ora News'
+    TYPO   tvprofil.com                 'mk/tv-raspored#ora-news' 'Ora News'
+    TYPO   epgshare01.online            'HK1#Zee.News.hk'      'Zee News'
+    TYPO   epgshare01.online            'IN4#ZEE.NEWS.+.in'    'ZEE NEWS +'
+
+'One Golf' (norm='one golf') -> NOT IN ANY iptv-org REGISTRY
+
+'PK: Madani Channel English' (norm='pk madani english') -> NOT IN ANY iptv-org REGISTRY
+
+'PMI TV' (norm='pmi') -> NOT IN ANY iptv-org REGISTRY
+
+'PTN 24' (norm='ptn 24')
+    TYPO   epg.iptvx.one                'tvn24-pl'             'TVN 24 HD'
+    TYPO   tvprofil.com                 'bg/tv-programa#tvn24' 'TVN24'
+    TYPO   tvprofil.com                 'al/programacioni#mcn-24' 'MCN 24'
+    TYPO   epgshare01.online            'CO1#NTN24.co'         'NTN24'
+    TYPO   siba.com.co                  '554'                  'NTN 24'
+    TYPO   tataplay.com                 '1079'                 'TTN 24'
+
+'PTV Home' (norm='ptv home')
+    TYPO   plex.tv                      '6685c2e02deb7f424133b08f' 'CTV @Home'
+    TYPO   i.mjh.nz                     'SamsungTVPlus/ca#CA14000028T' 'CTV @ Home'
+    EXACT  epgshare01.online            'PK1#PTV.Home.pk'      'PTV Home'
+
+'PTV News' (norm='ptv news')
+    TYPO   tvprofil.com                 'ie/tvschedule#rte-news' 'RTÉ News'
+    TYPO   mytelly.co.uk                '1650/rte-news'        'RTE News'
+    TYPO   plex.tv                      '6685c1a1b53e3bc0fd169e1d' 'CTV News'
+    TYPO   epgshare01.online            'CA1#CTV.News.Channel.ca' 'CTV News Channel'
+    TYPO   epgshare01.online            'HK1#TVB.News.hk'      'TVB News'
+    TYPO   programme.tvb.com            'C'                    'tvb news channel'
+
+'PTV Sports' (norm='ptv sports')
+    TYPO   plex.tv                      '605a309dc5acdc002c7a20aa' 'FTF Sports'
+    TYPO   epgshare01.online            'DISTROTV1#FTF.Sports.distro' 'FTF Sports'
+    TYPO   epgshare01.online            'CA1#TVA.Sports.ca'    'TVA Sports'
+    TYPO   epgshare01.online            'CA1#TVA.Sports.HD.ca' 'TVA Sports HD'
+    EXACT  epgshare01.online            'PK1#PTV.Sports.pk'    'PTV Sports'
+    TYPO   epgshare01.online            'KR1#tvN.SPORTS.kr'    'tvN SPORTS'
+
+'PTV Sports FHD' (norm='ptv sports')
+    TYPO   plex.tv                      '605a309dc5acdc002c7a20aa' 'FTF Sports'
+    TYPO   epgshare01.online            'DISTROTV1#FTF.Sports.distro' 'FTF Sports'
+    TYPO   epgshare01.online            'CA1#TVA.Sports.ca'    'TVA Sports'
+    TYPO   epgshare01.online            'CA1#TVA.Sports.HD.ca' 'TVA Sports HD'
+    EXACT  epgshare01.online            'PK1#PTV.Sports.pk'    'PTV Sports'
+    TYPO   epgshare01.online            'KR1#tvN.SPORTS.kr'    'tvN SPORTS'
+
+'PTV World' (norm='ptv world')
+    TYPO   epg.iptvx.one                'tvp-world'            'TVP World'
+    TYPO   tvprofil.com                 'at/tvprogramm#tvp-world' 'TVP World'
+    TYPO   tvprofil.com                 'me/tvprogram#prva-world' 'Prva World'
+    TYPO   tvprofil.com                 'ba/tvprogram#prva-world' 'Prva World'
+    TYPO   epgshare01.online            'IN4#BTV.WORLD.in'     'BTV WORLD'
+    TYPO   epgshare01.online            'US_LOCALS2#PBS.World.us' 'PBS World'
+
+'Pakus TV' (norm='pakus') -> NOT IN ANY iptv-org REGISTRY
+
+'Pardesi TV' (norm='pardesi') -> NOT IN ANY iptv-org REGISTRY
+
+'Pashto 1' (norm='pashto 1') -> NOT IN ANY iptv-org REGISTRY
+
+'Peace TV Urdu' (norm='peace urdu') -> NOT IN ANY iptv-org REGISTRY
+
+'Play Entertainment' (norm='play entertainment') -> NOT IN ANY iptv-org REGISTRY
+
+'Prime Canada TV' (norm='prime canada') -> NOT IN ANY iptv-org REGISTRY
+
+'Public News' (norm='public news') -> NOT IN ANY iptv-org REGISTRY
+
+'Raavi TV' (norm='raavi') -> NOT IN ANY iptv-org REGISTRY
+
+'Rohi TV' (norm='rohi') -> NOT IN ANY iptv-org REGISTRY
+
+'Roze News' (norm='roze news')
+    TYPO   tvprofil.com                 'ie/tvschedule#rte-news' 'RTÉ News'
+    TYPO   mytelly.co.uk                '1650/rte-news'        'RTE News'
+    TYPO   roya-tv.com                  '21'                   'Roya News'
+    TYPO   jiotv.com                    '3192'                 'AOne News'
+
+'See TV' (norm='see')
+    EXACT  allente.dk                   '30056'                'See'
+
+'Sindh TV' (norm='sindh') -> NOT IN ANY iptv-org REGISTRY
+
+'T Sports' (norm='t sports') -> NOT IN ANY iptv-org REGISTRY
+
+'TV One Global' (norm='one global')
+    TYPO   streamingtvguides.com        'TVONEGL'              'TVONE Global'
+
+'Ten Sports PK FHD' (norm='ten sports pk') -> NOT IN ANY iptv-org REGISTRY
+
+'Ten Sports PK HD' (norm='ten sports pk') -> NOT IN ANY iptv-org REGISTRY
+
+'Toronto 360 TV' (norm='toronto 360') -> NOT IN ANY iptv-org REGISTRY
+
+'Urdu 1' (norm='urdu 1')
+    TYPO   epg.iptvx.one                'ural1'                'URAL1'
+    TYPO   epgshare01.online            'DE1#UHD1.de'          'UHD1'
+    TYPO   epgshare01.online            'HU1#ARD1.hu'          'ARD1'
+    TYPO   tvmustra.hu                  'ARD'                  'ARD1'
+
+'Waseb TV' (norm='waseb') -> NOT IN ANY iptv-org REGISTRY
+
+'Zindagi TV' (norm='zindagi') -> NOT IN ANY iptv-org REGISTRY
+
+'en Sports' (norm='en sports') -> NOT IN ANY iptv-org REGISTRY

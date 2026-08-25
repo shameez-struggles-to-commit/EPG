@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<channels>
+  <channel site="streamingtvguides.com" site_id="AAJENT" lang="en" xmltv_id="">AAJ Entertainment</channel>
+  <channel site="streamingtvguides.com" site_id="ARYDI" lang="en" xmltv_id="">ARYDI (ARY Digital)</channel>
+  <channel site="streamingtvguides.com" site_id="ARYNEWS" lang="en" xmltv_id="">ARY News</channel>
+  <channel site="streamingtvguides.com" site_id="ARYZAUQ" lang="en" xmltv_id="">ARY Zauq</channel>
+  <channel site="streamingtvguides.com" site_id="DUNYA" lang="en" xmltv_id="">Dunya TV USA</channel>
+  <channel site="streamingtvguides.com" site_id="GEONWS" lang="en" xmltv_id="">Geo News</channel>
+  <channel site="streamingtvguides.com" site_id="GEOTV" lang="en" xmltv_id="">GEO TV</channel>
+  <channel site="streamingtvguides.com" site_id="HUMST" lang="en" xmltv_id="">Hum Sitaray</channel>
+  <channel site="streamingtvguides.com" site_id="HUMTV" lang="en" xmltv_id="">Hum TV</channel>
+  <channel site="streamingtvguides.com" site_id="MASALA" lang="en" xmltv_id="">Hum Masala</channel>
+  <channel site="streamingtvguides.com" site_id="MUSIK" lang="en" xmltv_id="">ARY Digital The Musik</channel>
+  <channel site="streamingtvguides.com" site_id="PTVGLB" lang="en" xmltv_id="">PTV Global</channel>
+  <channel site="streamingtvguides.com" site_id="QTVPAK" lang="en" xmltv_id="">QTV Pakistan</channel>
+</channels>

@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<channels>
+  <channel site="abc.net.au" site_id="Adelaide#7" lang="en" xmltv_id="">7</channel>
+  <channel site="abc.net.au" site_id="Adelaide#7flix" lang="en" xmltv_id="">7flix</channel>
+  <channel site="abc.net.au" site_id="Adelaide#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="Adelaide#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="Adelaide#9" lang="en" xmltv_id="">9</channel>
+  <channel site="abc.net.au" site_id="Adelaide#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="Adelaide#9Rush" lang="en" xmltv_id="">9Rush</channel>
+  <channel site="abc.net.au" site_id="Adelaide#44" lang="en" xmltv_id="">44</channel>
+  <channel site="abc.net.au" site_id="Adelaide#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="Adelaide#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="Adelaide#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="Brisbane#7" lang="en" xmltv_id="">7</channel>
+  <channel site="abc.net.au" site_id="Brisbane#7flix" lang="en" xmltv_id="">7flix</channel>
+  <channel site="abc.net.au" site_id="Brisbane#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="Brisbane#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="Brisbane#9" lang="en" xmltv_id="">9</channel>
+  <channel site="abc.net.au" site_id="Brisbane#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="Brisbane#9Rush" lang="en" xmltv_id="">9Rush</channel>
+  <channel site="abc.net.au" site_id="Brisbane#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="Brisbane#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="Brisbane#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="Canberra#7flix" lang="en" xmltv_id="">7flix</channel>
+  <channel site="abc.net.au" site_id="Canberra#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="Canberra#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="Canberra#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="Canberra#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="Canberra#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="Canberra#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="Canberra#WIN" lang="en" xmltv_id="">WIN</channel>
+  <channel site="abc.net.au" site_id="Darwin#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="Darwin#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="Darwin#9" lang="en" xmltv_id="">9</channel>
+  <channel site="abc.net.au" site_id="Darwin#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="Darwin#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="Darwin#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="Darwin#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="GoldCoast#7flix" lang="en" xmltv_id="">7flix</channel>
+  <channel site="abc.net.au" site_id="GoldCoast#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="GoldCoast#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="GoldCoast#9" lang="en" xmltv_id="">9</channel>
+  <channel site="abc.net.au" site_id="GoldCoast#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="GoldCoast#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="GoldCoast#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="GoldCoast#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="Hobart#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="Hobart#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="Hobart#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="Hobart#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="Hobart#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="Hobart#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="Hobart#WIN" lang="en" xmltv_id="">WIN</channel>
+  <channel site="abc.net.au" site_id="Melbourne#7" lang="en" xmltv_id="">7</channel>
+  <channel site="abc.net.au" site_id="Melbourne#7flix" lang="en" xmltv_id="">7flix</channel>
+  <channel site="abc.net.au" site_id="Melbourne#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="Melbourne#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="Melbourne#9" lang="en" xmltv_id="">9</channel>
+  <channel site="abc.net.au" site_id="Melbourne#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="Melbourne#9Rush" lang="en" xmltv_id="">9Rush</channel>
+  <channel site="abc.net.au" site_id="Melbourne#31" lang="en" xmltv_id="">31</channel>
+  <channel site="abc.net.au" site_id="Melbourne#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="Melbourne#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="Melbourne#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="New South Wales#7" lang="en" xmltv_id="">7</channel>
+  <channel site="abc.net.au" site_id="New South Wales#7flix" lang="en" xmltv_id="">7flix</channel>
+  <channel site="abc.net.au" site_id="New South Wales#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="New South Wales#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="New South Wales#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="New South Wales#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="New South Wales#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="New South Wales#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="New South Wales#WIN" lang="en" xmltv_id="">WIN</channel>
+  <channel site="abc.net.au" site_id="Northern Territory#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="Northern Territory#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="Northern Territory#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="Northern Territory#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="Northern Territory#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="Perth#7" lang="en" xmltv_id="">7</channel>
+  <channel site="abc.net.au" site_id="Perth#7flix" lang="en" xmltv_id="">7flix</channel>
+  <channel site="abc.net.au" site_id="Perth#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="Perth#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="Perth#9" lang="en" xmltv_id="">9</channel>
+  <channel site="abc.net.au" site_id="Perth#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="Perth#9Rush" lang="en" xmltv_id="">9Rush</channel>
+  <channel site="abc.net.au" site_id="Perth#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="Perth#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="Perth#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="Queensland#7flix" lang="en" xmltv_id="">7flix</channel>
+  <channel site="abc.net.au" site_id="Queensland#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="Queensland#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="Queensland#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="Queensland#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="Queensland#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="Queensland#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="Queensland#WIN" lang="en" xmltv_id="">WIN</channel>
+  <channel site="abc.net.au" site_id="South Australia#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="South Australia#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="South Australia#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="South Australia#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="South Australia#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="South Australia#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="South Australia#WIN" lang="en" xmltv_id="">WIN</channel>
+  <channel site="abc.net.au" site_id="Sydney#7" lang="en" xmltv_id="">7</channel>
+  <channel site="abc.net.au" site_id="Sydney#7flix" lang="en" xmltv_id="">7flix</channel>
+  <channel site="abc.net.au" site_id="Sydney#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="Sydney#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="Sydney#9" lang="en" xmltv_id="">9</channel>
+  <channel site="abc.net.au" site_id="Sydney#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="Sydney#9Rush" lang="en" xmltv_id="">9Rush</channel>
+  <channel site="abc.net.au" site_id="Sydney#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="Sydney#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="Sydney#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="Tasmania#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="Tasmania#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="Tasmania#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="Tasmania#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="Tasmania#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="Tasmania#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="Tasmania#WIN" lang="en" xmltv_id="">WIN</channel>
+  <channel site="abc.net.au" site_id="Townsville#7" lang="en" xmltv_id="">7</channel>
+  <channel site="abc.net.au" site_id="Townsville#7flix" lang="en" xmltv_id="">7flix</channel>
+  <channel site="abc.net.au" site_id="Townsville#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="Townsville#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="Townsville#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="Townsville#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="Townsville#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="Townsville#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="Townsville#WIN" lang="en" xmltv_id="">WIN</channel>
+  <channel site="abc.net.au" site_id="Victoria#7flix" lang="en" xmltv_id="">7flix</channel>
+  <channel site="abc.net.au" site_id="Victoria#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="Victoria#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="Victoria#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="Victoria#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="Victoria#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="Victoria#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="Victoria#WIN" lang="en" xmltv_id="">WIN</channel>
+  <channel site="abc.net.au" site_id="Western Australia#7MATE" lang="en" xmltv_id="">7MATE</channel>
+  <channel site="abc.net.au" site_id="Western Australia#7TWO" lang="en" xmltv_id="">7TWO</channel>
+  <channel site="abc.net.au" site_id="Western Australia#9Life" lang="en" xmltv_id="">9Life</channel>
+  <channel site="abc.net.au" site_id="Western Australia#ABC4KIDS" lang="en" xmltv_id="">ABC4KIDS</channel>
+  <channel site="abc.net.au" site_id="Western Australia#NITV" lang="en" xmltv_id="">NITV</channel>
+  <channel site="abc.net.au" site_id="Western Australia#ONE" lang="en" xmltv_id="">ONE</channel>
+  <channel site="abc.net.au" site_id="Western Australia#WIN" lang="en" xmltv_id="">WIN</channel>
+</channels>

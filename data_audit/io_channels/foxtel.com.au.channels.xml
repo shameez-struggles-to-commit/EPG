@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<channels>
+  <channel site="foxtel.com.au" site_id="Al-Jazeera/AJE" lang="en" xmltv_id="AlJazeera.qa@Arabic">Al Jazeera</channel>
+  <channel site="foxtel.com.au" site_id="Animal-Planet/ANI" lang="en" xmltv_id="AnimalPlanet.au@SD">Animal Planet</channel>
+  <channel site="foxtel.com.au" site_id="CMT/CMT" lang="en" xmltv_id="CMT.au@SD">CMT</channel>
+  <channel site="foxtel.com.au" site_id="CNBC/CNB" lang="en" xmltv_id="CNBCAustralia.au@SD">CNBC</channel>
+  <channel site="foxtel.com.au" site_id="CNN/CNN" lang="en" xmltv_id="CNNInternational.us@AsiaPacific">CNN</channel>
+  <channel site="foxtel.com.au" site_id="Discovery-2/DS2" lang="en" xmltv_id="DiscoveryChannel.au@Plus2">Discovery +2</channel>
+  <channel site="foxtel.com.au" site_id="Discovery-Channel/DIS" lang="en" xmltv_id="DiscoveryChannel.au@SD">Discovery Channel</channel>
+  <channel site="foxtel.com.au" site_id="Discovery-Turbo-2/DI2" lang="en" xmltv_id="">Discovery Turbo +2</channel>
+  <channel site="foxtel.com.au" site_id="Discovery-Turbo/DIT" lang="en" xmltv_id="DiscoveryTurbo.au@Australia">Discovery Turbo</channel>
+  <channel site="foxtel.com.au" site_id="DreamWorks/DRM" lang="en" xmltv_id="DreamWorksChannel.au@SD">DreamWorks</channel>
+  <channel site="foxtel.com.au" site_id="ESPN2/ES2" lang="en" xmltv_id="ESPN2.au@SD">ESPN2</channel>
+  <channel site="foxtel.com.au" site_id="ESPN/ESP" lang="en" xmltv_id="ESPN.au@SD">ESPN</channel>
+  <channel site="foxtel.com.au" site_id="Fashion-TV/FHT" lang="en" xmltv_id="">Fashion TV</channel>
+  <channel site="foxtel.com.au" site_id="FOX8/FOX" lang="en" xmltv_id="Fox8.au@SD">FOX8</channel>
+  <channel site="foxtel.com.au" site_id="Fox-Footy/FAF" lang="en" xmltv_id="FoxFooty.au@SD">Fox Footy</channel>
+  <channel site="foxtel.com.au" site_id="FOX-News/FNC" lang="en" xmltv_id="FoxNewsChannel.us@SD">FOX News</channel>
+  <channel site="foxtel.com.au" site_id="FOX-SPORTS-503/FS3" lang="en" xmltv_id="FoxSports503.au@SD">FOX SPORTS 503</channel>
+  <channel site="foxtel.com.au" site_id="FOX-SPORTS-505/FSP" lang="en" xmltv_id="FoxSports505.au@SD">FOX SPORTS 505</channel>
+  <channel site="foxtel.com.au" site_id="FOX-SPORTS-506/SPS" lang="en" xmltv_id="FoxSports506.au@SD">FOX SPORTS 506</channel>
+  <channel site="foxtel.com.au" site_id="Fox-Sports-More/FSS" lang="en" xmltv_id="">Fox Sports More</channel>
+  <channel site="foxtel.com.au" site_id="Fox-Sports-News/FSN" lang="en" xmltv_id="FoxSportsNews.au@SD">Fox Sports News</channel>
+  <channel site="foxtel.com.au" site_id="GB-News/GBN" lang="en" xmltv_id="">GB News</channel>
+  <channel site="foxtel.com.au" site_id="Investigation-Discovery/DID" lang="en" xmltv_id="InvestigationDiscovery.au@SD">Investigation Discovery</channel>
+  <channel site="foxtel.com.au" site_id="Lifetime-Movie-Network/LMS" lang="en" xmltv_id="LMN.au@SD">Lifetime Movie Network</channel>
+  <channel site="foxtel.com.au" site_id="Movies-Romance/SHD" lang="en" xmltv_id="">Movies Romance</channel>
+  <channel site="foxtel.com.au" site_id="MSNBC/MSN" lang="en" xmltv_id="">MSNBC</channel>
+  <channel site="foxtel.com.au" site_id="MTV-80s/MTC" lang="en" xmltv_id="">MTV 80s</channel>
+  <channel site="foxtel.com.au" site_id="MTV-Hits/TMF" lang="en" xmltv_id="MTVHits.au@SD">MTV Hits</channel>
+  <channel site="foxtel.com.au" site_id="NHK-WorldJapan/NHK" lang="en" xmltv_id="NHKWorldJapan.jp@SD">NHK World-Japan</channel>
+  <channel site="foxtel.com.au" site_id="Nick-Music/NMU" lang="en" xmltv_id="NickMusic.au@SD">Nick Music</channel>
+  <channel site="foxtel.com.au" site_id="RAI-ITALIA/RAI" lang="en" xmltv_id="RaiItalia.it@Australia">RAI ITALIA</channel>
+  <channel site="foxtel.com.au" site_id="SBS-Viceland/SBN" lang="en" xmltv_id="SBSViceland.au@Sydney">SBS Viceland</channel>
+  <channel site="foxtel.com.au" site_id="SBS-World-Movies-SD/S4B" lang="en" xmltv_id="SBSWorldMovies.au@Sydney">SBS World Movies SD</channel>
+  <channel site="foxtel.com.au" site_id="Showcase/SHC" lang="en" xmltv_id="Showcase.au@SD">Showcase</channel>
+  <channel site="foxtel.com.au" site_id="Sky-News-Extra/ASP" lang="en" xmltv_id="SkyNewsExtra.au@SD">Sky News Extra</channel>
+  <channel site="foxtel.com.au" site_id="Sky-News-UK/SUK" lang="en" xmltv_id="">Sky News UK</channel>
+  <channel site="foxtel.com.au" site_id="SKY-News/SKY" lang="en" xmltv_id="">SKY News</channel>
+  <channel site="foxtel.com.au" site_id="SKY-Racing-2/SR2" lang="en" xmltv_id="SkyRacing2.au@SD">SKY Racing 2</channel>
+  <channel site="foxtel.com.au" site_id="SKY-Racing/SRA" lang="en" xmltv_id="">SKY Racing</channel>
+  <channel site="foxtel.com.au" site_id="TLC/DTA" lang="en" xmltv_id="TLC.au@SD">TLC</channel>
+  <channel site="foxtel.com.au" site_id="Universal-TV/HAL" lang="en" xmltv_id="UniversalTV.au@SD">Universal TV</channel>
+</channels>
