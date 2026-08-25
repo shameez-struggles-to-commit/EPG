@@ -1,5 +1,7 @@
 name: R9 TVH probe (scratch, do not merge)
-on: workflow_dispatch
+on:
+  push:
+    branches: [r9-audit-scratch]
 jobs:
   probe:
     runs-on: ubuntu-latest
