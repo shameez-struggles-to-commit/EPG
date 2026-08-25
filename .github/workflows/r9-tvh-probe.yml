@@ -1,0 +1,19 @@
+name: R9 TVH probe (scratch, do not merge)
+on: workflow_dispatch
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe TVH hosts
+        run: |
+          for HOST in "http://115.42.65.142:9981" "http://119.156.228.231:9983" "http://103.86.135.164:9981" "http://103.250.28.74:8000"; do
+            echo "===== $HOST ====="
+            for EP in "/api/serverinfo" "/api/channel/list" "/api/epg/events/grid"; do
+              echo "--- GET $EP"
+              curl -s -m 12 -A "Mozilla/5.0" -o /tmp/out.json -w "HTTP %{http_code} size %{size_download}\n" "$HOST$EP" || echo CURL_FAIL
+              head -c 400 /tmp/out.json 2>/dev/null; echo
+            done
+            echo "--- POST epg grid"
+            curl -s -m 12 -A "Mozilla/5.0" -o /tmp/out2.json -w "HTTP %{http_code} size %{size_download}\n" -d "limit=100" "$HOST/api/epg/events/grid" || echo CURL_FAIL
+            head -c 600 /tmp/out2.json 2>/dev/null; echo
+          done
