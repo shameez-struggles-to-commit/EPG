@@ -1,2 +1,7 @@
 data/
 /tmp/
+
+data_audit/
+audit_output/
+audit_name_variants.py
+pipeline/__pycache__/
