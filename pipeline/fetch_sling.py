@@ -37,6 +37,13 @@ PK_CHANNELS = {
     "ARYNEWS-F": ("arynews.sling.pk", "ARY News", "cross-check"),
     "HUMTV-F":   ("humtv.sling.pk", "HUM TV", "cross-check"),
     "HUMNW-F":   ("humnews.sling.pk", "HUM News", "cross-check"),
+    # Round 12: Discover Pakistan validated separately 2026-08-26 (60-window QVT
+    # fetch: 60 current titled rows, ~27h horizon) - now self-contained here.
+    "DISPS":     ("discoverpakistan.sling.pk", "Discover Pakistan", "net-new"),
+}
+# Validated out-of-band 2026-08-26; keep even if summary lookup fails.
+_KNOWN_EXTRA = {
+    "DISPS": "be18400ab0494066a4d76ca12685a417",
 }
 
 
@@ -71,6 +78,8 @@ def resolve_callsigns():
         "HUMNW-F": "10c6bb51b7174440a12d7c36e52582f3",
     }
     for k, v in known.items():
+        out.setdefault(k, v)
+    for k, v in _KNOWN_EXTRA.items():
         out.setdefault(k, v)
     return out
 
