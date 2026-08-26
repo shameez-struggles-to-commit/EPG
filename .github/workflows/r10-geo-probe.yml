@@ -1,0 +1,25 @@
+name: R10 PK geo probe (scratch, do not merge)
+on:
+  workflow_dispatch:
+  push:
+    branches: [r10-audit-scratch]
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe PK-geo-blocked TV backends
+        run: |
+          probe() {
+            URL="$1"; LABEL="$2"
+            echo "===== $LABEL: $URL ====="
+            curl -sk -m 20 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o /tmp/out -w "HTTP %{http_code} size %{size_download} t=%{time_total}\n" "$URL" || echo CURL_FAIL
+            head -c 500 /tmp/out 2>/dev/null; echo; echo
+          }
+          probe "https://tvnation.com/" "tvnation.com root"
+          probe "https://admin-nxg.tvnation.com/" "admin-nxg root"
+          probe "https://partner.tvnation.com/site/login" "partner login"
+          probe "https://api.tvnation.com/site/login" "api (partner clone)"
+          probe "https://xtream.optix.pk/server/api/launcher_profile.php?uid=-1&language=en" "optix launcher"
+          probe "https://ptv.com.pk/tvguide" "PTV tvguide"
+          probe "https://ptv.com.pk/public/userView/getShowTvGuide?channel=3&nameofday=Wednesday" "PTV guide API"
+          probe "https://tvnation.com/wp-json/wp/v2/pages" "tvnation wp-json"
