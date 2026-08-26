@@ -73,8 +73,14 @@ def main(out_xml, days=3, out_status=None):
                 if not st or not en:
                     continue
                 try:
-                    s = dt.datetime.fromisoformat(f"{d.isoformat()}T{st}")
-                    x = dt.datetime.fromisoformat(f"{d.isoformat()}T{en}")
+                    # Wall-clock times are PKT (Asia/Karachi, +05:00) despite the
+                    # API serving no offset. Evidence (2026-08-26): the show titled
+                    # "Aaj 7 baje With Asma Iqbal" ("today at 7 o'clock") is served
+                    # at 19:05 wall-clock => 7 PM PKT, not 19:05 UTC; Nadeem Malik
+                    # Live (known 20:00 PKT slot) served at 20:06 wall-clock.
+                    # Attach +05:00 so norm_time converts to true UTC.
+                    s = dt.datetime.fromisoformat(f"{d.isoformat()}T{st}+05:00")
+                    x = dt.datetime.fromisoformat(f"{d.isoformat()}T{en}+05:00")
                 except ValueError:
                     continue
                 if x <= s:
@@ -88,8 +94,10 @@ def main(out_xml, days=3, out_status=None):
         if slug in have:
             xml.append(f'<channel id="{xid}"><display-name>{disp}</display-name></channel>')
     for slug, s, x, name in rows_all:
-        xml.append(f'<programme start="{s.strftime("%Y%m%d%H%M00 +0000")}" '
-                   f'stop="{x.strftime("%Y%m%d%H%M00 +0000")}" channel="{CHANNELS[slug][0]}">'
+        # emit true UTC instants (s/x carry +05:00 from the PKT correction)
+        su, xu = s.astimezone(dt.timezone.utc), x.astimezone(dt.timezone.utc)
+        xml.append(f'<programme start="{su.strftime("%Y%m%d%H%M00 +0000")}" '
+                   f'stop="{xu.strftime("%Y%m%d%H%M00 +0000")}" channel="{CHANNELS[slug][0]}">'
                    f'<title lang="en">{esc(name)}</title></programme>')
     xml.append("</tv>")
     open(out_xml, "w").write("\n".join(xml))
