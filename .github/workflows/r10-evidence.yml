@@ -16,6 +16,8 @@ jobs:
           IPTV_PASS: ${{ secrets.IPTV_PASS }}
         run: |
           set -x
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null 2>&1 || true
+          which ffmpeg || { echo "FFMPEG_MISSING"; }
           mkdir -p /tmp/r10
           cd /tmp/r10
           # ---------- 1) provider login + PTV Global stream URL ----------
