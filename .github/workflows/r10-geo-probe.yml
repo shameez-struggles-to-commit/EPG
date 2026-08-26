@@ -1,4 +1,4 @@
-name: R10 PK geo probe (scratch, do not merge)
+name: R10 PK geo probe 2 (scratch, do not merge)
 on:
   workflow_dispatch:
   push:
@@ -7,19 +7,19 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe PK-geo-blocked TV backends
+      - name: Deeper tvnation + channel lineup hunt from CI
         run: |
-          probe() {
-            URL="$1"; LABEL="$2"
-            echo "===== $LABEL: $URL ====="
-            curl -sk -m 20 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o /tmp/out -w "HTTP %{http_code} size %{size_download} t=%{time_total}\n" "$URL" || echo CURL_FAIL
-            head -c 500 /tmp/out 2>/dev/null; echo; echo
-          }
-          probe "https://tvnation.com/" "tvnation.com root"
-          probe "https://admin-nxg.tvnation.com/" "admin-nxg root"
-          probe "https://partner.tvnation.com/site/login" "partner login"
-          probe "https://api.tvnation.com/site/login" "api (partner clone)"
-          probe "https://xtream.optix.pk/server/api/launcher_profile.php?uid=-1&language=en" "optix launcher"
-          probe "https://ptv.com.pk/tvguide" "PTV tvguide"
-          probe "https://ptv.com.pk/public/userView/getShowTvGuide?channel=3&nameofday=Wednesday" "PTV guide API"
-          probe "https://tvnation.com/wp-json/wp/v2/pages" "tvnation wp-json"
+          set -e
+          fetch() { echo "===== $2 ====="; curl -sk -m 25 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" -o /tmp/o -w "HTTP %{http_code} size %{size_download}\n" "$1" || echo CURL_FAIL; head -c 1500 /tmp/o; echo; echo; }
+          # full homepage - look for channel lineup / EPG links
+          fetch "https://tvnation.com/" "tvnation.com home (full)"
+          fetch "https://tvnation.com/wp-json/wp/v2/pages?per_page=100" "wp-json pages"
+          fetch "https://tvnation.com/wp-json/wp/v2/posts?per_page=50" "wp-json posts"
+          # try likely lineup/EPG pages
+          for p in channel-lineup lineup channels epg tv-guide guide schedule; do
+            fetch "https://tvnation.com/$p/" "page /$p/"
+          done
+          # partner portal structure probes (Yii): known controller names
+          for p in site/index site/login channel/index epg/index lineup/index; do
+            fetch "https://partner.tvnation.com/$p" "partner /$p"
+          done
