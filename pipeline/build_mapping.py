@@ -35,6 +35,7 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from matcher import SourceIndex, norm, is_non_linear, cyr_to_lat
+from source_registry import iptv_org_countries
 
 TIER = {
     'pk': 0, 'iptv-org': 1, 'skyhawk': 2, 'dstv': 2, 'epgone': 2,
@@ -178,39 +179,9 @@ SKY_TERRITORY = {
 # AUDIT-4: Norwegian V Sport 1 was selecting the Finnish fi:40051 feed.
 ALLENTE_PREFIX = {'DK': 'dk', 'NO': 'no', 'FI': 'fi', 'SE': 'se'}
 
-# iptv-org site -> countries it may serve. FIXES the old blanket
-# "iptv-org = India only" gate which silently hid ALL non-India grabber
-# outputs from their own countries' streams (found in the 2026-08-15
-# matching audit: Orange Sport RO, Cablenet CY, TV4 Motor SE, OCS/Moselle FR,
-# DE regional channels etc. all existed in grabs but were gated away).
-# Sites not listed here fall back to IN-only (conservative; the five India
-# grab sites dominate that list).
-IPTV_ORG_COUNTRIES = {
-    'jiotv': {'IN'}, 'tataplay': {'IN'}, 'dishtv': {'IN'},
-    'airtelxstream': {'IN'}, 'zee5': {'IN'},
-    'epg.112114.xyz': {'IN'},
-    'tvpassport.com': {'US', 'CA', 'MX', 'DE'},
-    'tv24.co.uk': {'UK', 'IE', 'DE'},
-    'tvireland.ie': {'IE', 'UK'},
-    'www.magenta.tv': {'DE', 'FR'}, 'web.magentatv.de': {'DE', 'FR'},
-    'tv.blue.ch': {'CH', 'DE', 'FR', 'IT', 'AT', 'GR', 'RO'},
-    'abc.net.au': {'AU'}, 'foxtel.com.au': {'AU'},
-    'tvhebdo.com': {'CA', 'FR'},
-    'programetv.ro': {'RO'},
-    'programacion-tv.elpais.com': {'ES'}, 'movistarplus.es': {'ES'},
-    'programme-tv.net': {'FR'},
-    'meo.pt': {'PT'}, 'nostv.pt': {'PT'},
-    'guidatv.sky.it': {'IT'},
-    'cosmotetv.gr': {'GR'},
-    'cyta.com.cy': {'CY', 'GR'},
-    'allente.se': {'SE'},
-    'tv24.se': {'SE', 'DK', 'NO'},
-    'mujtvprogram.cz': {'CZ', 'SK'},
-    'tvmustra.hu': {'HU', 'PT'},
-    'gigatv.3bbtv.co.th': {'TH'},
-    'tv.trueid.net': {'TH'},
-    'tvinsider.com': {'US', 'CA'},
-}
+# iptv-org site -> countries it may serve. The registry is the single source
+# of truth for fetch selection and matching gates.
+IPTV_ORG_COUNTRIES = iptv_org_countries()
 
 
 def iptv_org_allowed(src, cc):
