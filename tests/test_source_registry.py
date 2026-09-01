@@ -42,6 +42,14 @@ class SourceRegistryTest(unittest.TestCase):
         active = {source["name"] for source in self.load_registry()["sources"]}
         self.assertNotIn("tvcesoir.fr", active)
 
+    def test_all_iptv_org_sources_are_optional(self):
+        sources = [
+            source for source in self.load_registry()["sources"]
+            if source["kind"] == "iptv-org"
+        ]
+        self.assertTrue(sources)
+        self.assertEqual({"optional"}, {source["policy"] for source in sources})
+
     def test_python_consumers_use_the_registry(self):
         make_channels = (ROOT / "pipeline/make_iptvorg_channels.py").read_text(
             encoding="utf-8"

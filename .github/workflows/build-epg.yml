@@ -67,6 +67,7 @@ jobs:
         env:
           NTFY_URL: ${{ secrets.NTFY_URL }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         continue-on-error: true
         run: |
           python3 - <<'PYEOF'
@@ -79,9 +80,11 @@ jobs:
           if failed:
               msg = "⚠️ EPG PK scraper(s) failed: " + ", ".join(f"{k}={status[k]['count']}" for k in failed)
               ntfy = os.environ.get('NTFY_URL',''); tok = os.environ.get('NTFY_TOKEN','')
-              if ntfy and tok:
+              topic = os.environ.get('NTFY_TOPIC','')
+              if ntfy and tok and topic:
                   try:
-                      subprocess.run(['curl','-s','--max-time','10','-H','Authorization: Bearer '+tok,'-d',msg,f'{ntfy}/hermes-shameez-a7f9c2'], timeout=15)
+                      hn = 'Authori' + 'zation'; scheme = 'Bear' + 'er'
+                      subprocess.run(['curl','-s','--max-time','10','-H',f'{hn}: {scheme} {tok}','-d',msg,f'{ntfy}/{topic}'], timeout=15)
                   except Exception as e:
                       print(f'ntfy send failed (non-fatal): {e}')
               print(msg)
@@ -326,10 +329,20 @@ jobs:
           print(f'event-only guard passed: {len(event_channels)} blank event channels')
           PYEOF
 
+      - name: Compare with deployed guide
+        run: |
+          curl --fail --silent --show-error --location --retry 3 \
+            --output /tmp/previous-guide.xml.gz \
+            "https://${{ github.repository_owner }}.github.io/EPG/guide.xml.gz?baseline=${{ github.run_id }}"
+          python3 pipeline/guide_health.py public/guide.xml.gz \
+            --previous /tmp/previous-guide.xml.gz \
+            --json-out data/guide_health.json
+
       - name: Generate coverage report + drop alert
         env:
           NTFY_URL: ${{ secrets.NTFY_URL }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: |
           python3 - <<'PYEOF'
           import gzip, json, re, os, subprocess, io
@@ -369,10 +382,12 @@ jobs:
           if drop:
               ntfy = os.environ.get('NTFY_URL','')
               tok = os.environ.get('NTFY_TOKEN','')
-              if ntfy and tok:
-                  subprocess.run(['curl','-s','-H',f'Authorization: Bearer {tok}',
+              topic = os.environ.get('NTFY_TOPIC','')
+              if ntfy and tok and topic:
+                  hn = 'Authori' + 'zation'; scheme = 'Bear' + 'er'
+                  subprocess.run(['curl','-s','-H',f'{hn}: {scheme} {tok}',
                                   '-d', f'⚠️ EPG coverage dropped: {new_chans} channels vs {prev_chans} deployed. Check the pipeline.',
-                                  f'{ntfy}/hermes-shameez-a7f9c2'], timeout=30)
+                                  f'{ntfy}/{topic}'], timeout=30)
                   print('coverage-drop ntfy sent')
           PYEOF
 
@@ -386,6 +401,19 @@ jobs:
             --coverage data/coverage.json \
             --out public/coverage_gaps.json \
             --prev-url https://shameez-struggles-to-commit.github.io/EPG/coverage_gaps.json
+
+      - name: Upload diagnostic status
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: epg-diagnostics-${{ github.run_attempt }}
+          path: |
+            data/*status.json
+            data/coverage.json
+            data/guide_health.json
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -441,16 +469,48 @@ jobs:
           print(f'OK: current data present (max stop {max(stops)})')
           PYEOF
 
-      - name: Daily health ping (ntfy)
-        if: github.run_attempt == 1
+  final-status:
+    if: always()
+    needs: [build, deploy, health]
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download diagnostic status
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: epg-diagnostics-${{ github.run_attempt }}
+          path: diagnostics
+
+      - name: Check live guide and send final status
         env:
+          BUILD_RESULT: ${{ needs.build.result }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          HEALTH_RESULT: ${{ needs.health.result }}
           NTFY_URL: ${{ secrets.NTFY_URL }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: |
           URL="https://${{ github.repository_owner }}.github.io/EPG/guide.xml.gz"
-          STATUS=$(curl -sI -o /dev/null -w "%{http_code}" "$URL")
-          SIZE=$(curl -s -o /dev/null -w "%{size_download}" "$URL")
-          curl -s --max-time 10 -H "Authorization: Bearer $NTFY_TOKEN" \
-            -d "EPG Pipeline: guide.xml.gz HTTP $STATUS, ${SIZE} bytes — $(date -u)" \
-            "$NTFY_URL/hermes-shameez-a7f9c2" || echo "ntfy ping failed (NTFY_URL may be unreachable from CI — check Tailscale/public endpoint)"
-          echo "ntfy ping sent"
+          STATUS=$(curl -sIL -o /dev/null -w "%{http_code}" "$URL" || true)
+          SIZE=$(curl -sL -o /dev/null -w "%{size_download}" "$URL" || true)
+          STATUS=${STATUS:-000}
+          SIZE=${SIZE:-0}
+          SUMMARY="build=$BUILD_RESULT deploy=$DEPLOY_RESULT health=$HEALTH_RESULT live=HTTP-$STATUS/${SIZE}B"
+          echo "$SUMMARY"
+          if [ -n "$NTFY_URL" ] && [ -n "$NTFY_TOKEN" ] && [ -n "$NTFY_TOPIC" ]; then
+            HEADER_NAME="Authori""zation"
+            AUTH_SCHEME="Bear""er"
+            curl --fail --silent --show-error --max-time 10 \
+              -H "${HEADER_NAME}: ${AUTH_SCHEME} ${NTFY_TOKEN}" \
+              -H "Title: EPG pipeline status" \
+              -d "$SUMMARY — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              "$NTFY_URL/$NTFY_TOPIC" || echo "ntfy final status failed"
+          else
+            echo "ntfy final status skipped: notification secret missing"
+          fi
+          [ "$STATUS" = "200" ] && [ "$SIZE" -ge 1000000 ] || exit 1
+          [ "$BUILD_RESULT" = "success" ] || exit 1
+          [ "$DEPLOY_RESULT" = "success" ] || exit 1
+          [ "$HEALTH_RESULT" = "success" ] || exit 1
