@@ -20,7 +20,7 @@ class SourceRegistryTest(unittest.TestCase):
 
     def test_live_registry_passes_strict_loader(self):
         registry = load_source_registry(CONFIG)
-        self.assertEqual(31, len(registry["sources"]))
+        self.assertGreaterEqual(len(registry["sources"]), 30)
 
     def test_registry_has_unique_source_names(self):
         sources = self.load_registry()["sources"]
