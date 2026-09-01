@@ -44,7 +44,6 @@ SITES = [
     'programacion-tv.elpais.com',  # ES
     'movistarplus.es',     # ES
     'programme-tv.net',    # FR
-    'tvcesoir.fr',         # FR
     'meo.pt',              # PT
     'guidatv.sky.it',      # IT
     'cosmotetv.gr',        # GR

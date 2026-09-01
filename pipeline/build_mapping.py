@@ -198,7 +198,7 @@ IPTV_ORG_COUNTRIES = {
     'tvhebdo.com': {'CA', 'FR'},
     'programetv.ro': {'RO'},
     'programacion-tv.elpais.com': {'ES'}, 'movistarplus.es': {'ES'},
-    'programme-tv.net': {'FR'}, 'tvcesoir.fr': {'FR'},
+    'programme-tv.net': {'FR'},
     'meo.pt': {'PT'}, 'nostv.pt': {'PT'},
     'guidatv.sky.it': {'IT'},
     'cosmotetv.gr': {'GR'},
