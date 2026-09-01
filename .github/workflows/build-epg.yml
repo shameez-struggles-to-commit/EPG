@@ -2,8 +2,8 @@ name: Build EPG Guide
 
 on:
   schedule:
-    # 04:00 UTC daily (midnight-ish for most timezones)
-    - cron: '0 4 * * *'
+    # 04:17 UTC daily. GitHub documents higher schedule load at minute 0.
+    - cron: '17 4 * * *'
   push:
     branches: [main]
   workflow_dispatch:
@@ -40,7 +40,9 @@ jobs:
           python-version: '3.12'
 
       - name: Run regression tests
-        run: python3 -m unittest discover -s tests -v
+        run: |
+          python3 -m unittest discover -s tests -v
+          bash tests/test_fetch_scheduler.sh
 
       - name: Install iptv-org/epg
         run: |
@@ -108,31 +110,29 @@ jobs:
           cd /tmp/iptv-org-epg
           WS="$GITHUB_WORKSPACE"
           mkdir -p "$WS/data"
+          source "$WS/pipeline/fetch_scheduler.sh"
+
+          # Start custom fetchers now so they overlap with every iptv-org grab.
+          cd "$WS"
+          declare -A FETCH_PID FETCH_REQ
+          trap cleanup_fetchers EXIT
+          run_fetch() {
+            local name="$1"; local req="$2"; shift 2
+            "$@" & FETCH_PID[$!]=$name; FETCH_REQ[$name]=$req
+          }
+          run_fetch skyhawk   1 python3 pipeline/fetch_skyhawk.py data/streams.json data/skyhawk.xml --days 2
+          run_fetch dstv      1 python3 pipeline/fetch_dstv.py data/dstv.xml --days 2
+          run_fetch epgone    0 python3 pipeline/fetch_epgone.py data/epgone_cis.xml data/streams.json
+          run_fetch allente   1 python3 pipeline/fetch_allente.py data/allente.xml --days 2
+          run_fetch teamfix   1 python3 pipeline/fetch_teamfixtures.py data/streams.json data/teamfixtures.xml data/teams_claim.json data/teams_status.json
+          run_fetch bbcradio  1 python3 pipeline/fetch_bbcradio.py data/streams.json data/bbcradio.xml data/bbc_status.json --days 2
+          cd /tmp/iptv-org-epg
 
           # --- all iptv-org grabs: bounded concurrency + per-job status ---
           # AUDIT-6: wait -n discarded exit statuses and missing outputs were
           # warnings. Track every launched job and fail this fetch stage when a
           # non-empty filtered channel list produces no usable output.
           IO_PIDS=(); IO_FILES=(); IO_POLICY=(); IO_DONE=(); IO_FAIL=0
-          run_io() {
-            local out="$1"; local policy="$2"; shift 2
-            "$@" &
-            IO_PIDS+=("$!"); IO_FILES+=("$out"); IO_POLICY+=("$policy")
-          }
-          reap_first() {
-            local pid="${IO_PIDS[0]}"
-            local out="${IO_FILES[0]}"
-            local policy="${IO_POLICY[0]}"
-            if ! wait "$pid"; then
-              if [ "$policy" = "required" ]; then
-                IO_FAIL=1; echo "required iptv-org grab failed: $out"
-              else
-                echo "DEGRADED optional iptv-org grab failed: $out"
-              fi
-            fi
-            IO_DONE+=("$out")
-            IO_PIDS=("${IO_PIDS[@]:1}"); IO_FILES=("${IO_FILES[@]:1}"); IO_POLICY=("${IO_POLICY[@]:1}")
-          }
 
           # India per-site grabs (per-site avoids numeric-id collisions).
           UNFILTERED_JOBS="$(python3 "$WS/pipeline/source_registry.py" list-iptv-org --unfiltered --pairs)"
@@ -152,44 +152,29 @@ jobs:
             else
               echo "skip $site (empty filter)"
             fi
-            if [ "${#IO_PIDS[@]}" -ge 6 ]; then reap_first; fi
+            if [ "${#IO_PIDS[@]}" -ge 6 ]; then reap_any; fi
           done <<< "$FILTERED_JOBS"
-          while [ "${#IO_PIDS[@]}" -gt 0 ]; do reap_first; done
+          while [ "${#IO_PIDS[@]}" -gt 0 ]; do reap_any; done
           [ "$IO_FAIL" = "0" ] || { echo "one or more required iptv-org grabs failed"; exit 1; }
           python3 "$WS/pipeline/source_registry.py" validate-outputs \
             --prefix "$WS/data" --status-out "$WS/data/iptv_org_status.json"
 
-          # --- custom fetchers (background; only need streams.json) ---
-          # AUDIT-4 F-02: bare `wait` returned 0 even when a child failed.
-          # Capture PIDs and check each exit code; REQUIRED fetchers fail the
-          # build; optional ones log loudly. epg.one is optional (bonus CIS
-          # source; its mirrors are flaky by nature).
+          # Custom fetchers were started before the iptv-org fan-out. Verify
+          # every PID now. Required failures stop the build; epg.one is optional.
           cd "$WS"
-          declare -A FETCH_PID FETCH_NAME FETCH_REQ
-          run_fetch() {  # name, required(0/1), cmd...
-            local name="$1"; local req="$2"; shift 2
-            "$@" & FETCH_PID[$!]=$name; FETCH_REQ[$name]=$req; FETCH_NAME[$!]=$name
-          }
-          run_fetch skyhawk   1 python3 pipeline/fetch_skyhawk.py data/streams.json data/skyhawk.xml --days 2
-          run_fetch dstv      1 python3 pipeline/fetch_dstv.py data/dstv.xml --days 2
-          run_fetch epgone    0 python3 pipeline/fetch_epgone.py data/epgone_cis.xml data/streams.json
-          run_fetch allente   1 python3 pipeline/fetch_allente.py data/allente.xml --days 2
-          run_fetch teamfix   1 python3 pipeline/fetch_teamfixtures.py data/streams.json data/teamfixtures.xml data/teams_claim.json data/teams_status.json
-          run_fetch bbcradio  1 python3 pipeline/fetch_bbcradio.py data/streams.json data/bbcradio.xml data/bbc_status.json --days 2
-
-          # iptv-org grabs keep their own loop above; wait everything else,
-          # then verify the custom fetchers by PID.
           FAIL=0
           for pid in "${!FETCH_PID[@]}"; do
+            name="${FETCH_PID[$pid]}"
             if ! wait "$pid"; then
-              name="${FETCH_PID[$pid]}"
               if [ "${FETCH_REQ[$name]}" = "1" ]; then
                 echo "REQUIRED fetcher failed: $name (pid $pid)"; FAIL=1
               else
                 echo "optional fetcher failed: $name (non-fatal)"
               fi
             fi
+            unset 'FETCH_PID[$pid]'
           done
+          trap - EXIT
           [ "$FAIL" = "0" ] || { echo "failing build: required fetcher(s) exited non-zero"; exit 1; }
 
           # required OUTPUT validation: exit 0 + non-empty valid XMLTV file
