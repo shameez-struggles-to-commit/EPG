@@ -3,7 +3,11 @@ import pathlib
 import tempfile
 import unittest
 
-from pipeline.source_registry import validate_iptv_org_outputs
+from pipeline.source_registry import (
+    load_source_registry,
+    registry_files,
+    validate_iptv_org_outputs,
+)
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -13,6 +17,10 @@ CONFIG = ROOT / "config/sources.json"
 class SourceRegistryTest(unittest.TestCase):
     def load_registry(self):
         return json.loads(CONFIG.read_text(encoding="utf-8"))
+
+    def test_live_registry_passes_strict_loader(self):
+        registry = load_source_registry(CONFIG)
+        self.assertEqual(31, len(registry["sources"]))
 
     def test_registry_has_unique_source_names(self):
         sources = self.load_registry()["sources"]
@@ -164,6 +172,65 @@ class SourceRegistryTest(unittest.TestCase):
                 config.write_text(json.dumps(registry), encoding="utf-8")
                 with self.assertRaises(ValueError):
                     validate_iptv_org_outputs(directory, config)
+
+    def test_region_suffixes_must_be_safe_strings(self):
+        registry = {
+            "schema_version": 1,
+            "sources": [{
+                "name": "bad.example", "kind": "iptv-org",
+                "site": "bad.example", "countries": ["US"],
+                "filtered": True, "policy": "optional",
+                "min_programmes": 1, "output": "io_bad.xml",
+                "region_suffixes": ["_us", "bad|suffix"],
+            }],
+            "retired": [],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            config = pathlib.Path(directory) / "sources.json"
+            config.write_text(json.dumps(registry), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_source_registry(config)
+
+    def test_files_command_filter_is_applied(self):
+        registry = {
+            "schema_version": 1,
+            "sources": [
+                {"name":"a","kind":"iptv-org","site":"a","countries":["US"],"filtered":True,"policy":"optional","min_programmes":1,"output":"io_a.xml"},
+                {"name":"b","kind":"iptv-org","site":"b","countries":["IN"],"filtered":False,"policy":"optional","min_programmes":1,"output":"io_b.xml"},
+            ],
+            "retired": [],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            config = pathlib.Path(directory) / "sources.json"
+            config.write_text(json.dumps(registry), encoding="utf-8")
+            self.assertEqual(["data/io_a.xml"], registry_files("data", config, filtered=True))
+            self.assertEqual(["data/io_b.xml"], registry_files("data", config, filtered=False))
+
+    def test_programme_without_required_structure_is_unusable(self):
+        registry = {
+            "schema_version": 1,
+            "sources": [{
+                "name": "optional.example", "kind": "iptv-org",
+                "site": "optional.example", "countries": ["US"],
+                "filtered": True, "policy": "optional",
+                "min_programmes": 1, "output": "io_optional.xml",
+            }],
+            "retired": [],
+        }
+        invalid_rows = [
+            '<tv><programme/></tv>',
+            '<tv><channel id="x"/><programme channel="x" start="20260901000000 +0000" stop="20260901010000 +0000"/></tv>',
+            '<tv><programme channel="missing" start="20260901000000 +0000" stop="20260901010000 +0000"><title>Show</title></programme></tv>',
+        ]
+        for xml in invalid_rows:
+            with self.subTest(xml=xml), tempfile.TemporaryDirectory() as directory:
+                root = pathlib.Path(directory)
+                config = root / "sources.json"
+                config.write_text(json.dumps(registry), encoding="utf-8")
+                (root / "io_optional.xml").write_text(xml, encoding="utf-8")
+                statuses, failures = validate_iptv_org_outputs(root, config)
+                self.assertEqual([], failures)
+                self.assertFalse(statuses[0]["usable"])
 
     def test_workflow_does_not_copy_the_source_list(self):
         workflow = (ROOT / ".github/workflows/build-epg.yml").read_text(encoding="utf-8")
