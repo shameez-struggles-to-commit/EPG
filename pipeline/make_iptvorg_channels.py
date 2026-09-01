@@ -23,50 +23,16 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from matcher import SourceIndex, norm
+from source_registry import iptv_org_sources, load_source_registry
 
 UA = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'}
 BASE = 'https://raw.githubusercontent.com/iptv-org/epg/master/sites/{dir}/{site}.channels.xml'
 
-# Validated grabbers (2026-08-15 audit). India sites are grabbed unfiltered
-# in the existing workflow step (full-lineup grabs there are cheap and the
-# coverage is broad); this list is the NON-India expansion.
-SITES = [
-    'tvpassport.com',      # US incl. no-callsign locals
-    'tv24.co.uk',          # UK
-    'tvireland.ie',        # IE
-    'www.magenta.tv',      # DE
-    'web.magentatv.de',    # DE
-    'tv.blue.ch',          # CH (DE/FR/IT)
-    'abc.net.au',          # AU
-    'foxtel.com.au',       # AU
-    'tvhebdo.com',         # CA
-    'programetv.ro',       # RO
-    'programacion-tv.elpais.com',  # ES
-    'movistarplus.es',     # ES
-    'programme-tv.net',    # FR
-    'meo.pt',              # PT
-    'guidatv.sky.it',      # IT
-    'cosmotetv.gr',        # GR
-    'cyta.com.cy',         # CY
-    'allente.se',          # SE
-    'epg.112114.xyz',      # IN (AIO mirror)
-    'gigatv.3bbtv.co.th',  # TH
-    'tvinsider.com',       # US
-    # 2026-08-19 additions (verified live 2-day grabs in the expansion audit)
-    'tv24.se',             # SE/DK/NO (TV2 Danmark, TV4 Sport Live, SkyShowtime)
-    'mujtvprogram.cz',     # CZ/SK
-    'tvmustra.hu',         # HU (incl. Stingray CMusic)
-    'nostv.pt',            # PT
-    'tv.trueid.net',       # TH (17/30 TH gaps; grab via EN channel file)
-]
 
-# sites that ship REGION-SUFFIXED channels files instead of <site>.channels.xml.
-# Value: list of region suffixes to merge ([] = all regions).
-REGION_FILES = {
-    'abc.net.au': [],            # merge all abc.net.au_* files (AU regional)
-    'allente.se': ['_se'],
-    'tv.trueid.net': ['_en'],    # EN-language names (Latin script = matchable)
-}
+# Filtered sites and region-file rules come from config/sources.json.
+def filtered_sites():
+    load_source_registry()  # validate once before any network work
+    return iptv_org_sources(filtered=True)
 
 
 def github_dir_listing(site):
@@ -104,15 +70,16 @@ def main():
             idx.add(n, 'x')
             names.add(norm(n))
 
-    for site in SITES:
+    for source in filtered_sites():
+        site = source['site']
         d = site
         # determine which channels files to merge (plain vs region-suffixed)
         plain_url = BASE.format(dir=d, site=site)
         files = [('plain', plain_url)]
-        if site in REGION_FILES:
+        if 'region_suffixes' in source:
             try:
                 listing = github_dir_listing(d)
-                suffixes = REGION_FILES[site]
+                suffixes = source['region_suffixes']
                 files = [('region', f'https://raw.githubusercontent.com/'
                                     f'iptv-org/epg/master/sites/{d}/{f}')
                          for f in listing

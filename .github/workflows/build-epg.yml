@@ -102,58 +102,51 @@ jobs:
           # AUDIT-6: wait -n discarded exit statuses and missing outputs were
           # warnings. Track every launched job and fail this fetch stage when a
           # non-empty filtered channel list produces no usable output.
-          IO_PIDS=(); IO_FILES=(); IO_DONE=(); IO_FAIL=0
+          IO_PIDS=(); IO_FILES=(); IO_POLICY=(); IO_DONE=(); IO_FAIL=0
           run_io() {
-            local out="$1"; shift
+            local out="$1"; local policy="$2"; shift 2
             "$@" &
-            IO_PIDS+=("$!"); IO_FILES+=("$out")
+            IO_PIDS+=("$!"); IO_FILES+=("$out"); IO_POLICY+=("$policy")
           }
           reap_first() {
             local pid="${IO_PIDS[0]}"
             local out="${IO_FILES[0]}"
-            if ! wait "$pid"; then IO_FAIL=1; echo "iptv-org grab failed: $out"; fi
+            local policy="${IO_POLICY[0]}"
+            if ! wait "$pid"; then
+              if [ "$policy" = "required" ]; then
+                IO_FAIL=1; echo "required iptv-org grab failed: $out"
+              else
+                echo "DEGRADED optional iptv-org grab failed: $out"
+              fi
+            fi
             IO_DONE+=("$out")
-            IO_PIDS=("${IO_PIDS[@]:1}"); IO_FILES=("${IO_FILES[@]:1}")
+            IO_PIDS=("${IO_PIDS[@]:1}"); IO_FILES=("${IO_FILES[@]:1}"); IO_POLICY=("${IO_POLICY[@]:1}")
           }
 
-          # India per-site grabs (per-site avoids numeric-id collisions)
-          run_io "$WS/data/io_jiotv.xml" npm run grab -- --sites=jiotv.com --maxConnections=4 --output="$WS/data/io_jiotv.xml"
-          run_io "$WS/data/io_tataplay.xml" npm run grab -- --sites=tataplay.com --maxConnections=4 --output="$WS/data/io_tataplay.xml"
-          run_io "$WS/data/io_dishtv.xml" npm run grab -- --sites=dishtv.in --maxConnections=4 --output="$WS/data/io_dishtv.xml"
-          run_io "$WS/data/io_airtel.xml" npm run grab -- --sites=airtelxstream.in --maxConnections=4 --output="$WS/data/io_airtel.xml"
-          run_io "$WS/data/io_zee5.xml" npm run grab -- --sites=zee5.com --maxConnections=4 --output="$WS/data/io_zee5.xml"
+          # India per-site grabs (per-site avoids numeric-id collisions).
+          UNFILTERED_JOBS="$(python3 "$WS/pipeline/source_registry.py" list-iptv-org --unfiltered --pairs)"
+          [ -n "$UNFILTERED_JOBS" ] || { echo "source registry returned no unfiltered jobs"; exit 1; }
+          while IFS='|' read -r site output policy min_programmes; do
+            run_io "$WS/data/$output" "$policy" npm run grab -- --sites="$site" --maxConnections=4 --output="$WS/data/$output"
+          done <<< "$UNFILTERED_JOBS"
 
           # Remaining non-India sites (throttled to six in flight).
-          for site in tvpassport.com tv24.co.uk tvireland.ie www.magenta.tv web.magentatv.de tv.blue.ch abc.net.au foxtel.com.au tvhebdo.com programetv.ro programacion-tv.elpais.com movistarplus.es programme-tv.net meo.pt guidatv.sky.it cosmotetv.gr cyta.com.cy allente.se epg.112114.xyz gigatv.3bbtv.co.th tvinsider.com tv24.se mujtvprogram.cz tvmustra.hu nostv.pt tv.trueid.net; do
+          FILTERED_JOBS="$(python3 "$WS/pipeline/source_registry.py" list-iptv-org --filtered --pairs)"
+          [ -n "$FILTERED_JOBS" ] || { echo "source registry returned no filtered jobs"; exit 1; }
+          while IFS='|' read -r site output policy min_programmes; do
             CH="$WS/data/io_channels/$site.channels.xml"
             if [ -s "$CH" ]; then
-              OUT="$WS/data/io_${site}.xml"
-              run_io "$OUT" npx tsx scripts/commands/epg/grab.ts --channels="$CH" --output="$OUT" --days=2 --timeout=30000 --maxConnections=10
+              OUT="$WS/data/$output"
+              run_io "$OUT" "$policy" npx tsx scripts/commands/epg/grab.ts --channels="$CH" --output="$OUT" --days=2 --timeout=30000 --maxConnections=10
             else
               echo "skip $site (empty filter)"
             fi
             if [ "${#IO_PIDS[@]}" -ge 6 ]; then reap_first; fi
-          done
+          done <<< "$FILTERED_JOBS"
           while [ "${#IO_PIDS[@]}" -gt 0 ]; do reap_first; done
-          [ "$IO_FAIL" = "0" ] || { echo "one or more iptv-org grabs failed"; exit 1; }
-          OPTIONAL_ZERO=(io_jiotv.xml io_tvinsider.com.xml)
-          for out in "${IO_DONE[@]}" "${IO_FILES[@]}"; do
-            if [ ! -s "$out" ] || [ "$(wc -c < "$out")" -lt 1024 ]; then
-              echo "iptv-org output missing/empty: $out"; exit 1
-            fi
-            # A large XML file with zero programmes is still a failed grab.
-            # Two known optional feeds are allowed to be empty, but remain
-            # visibly degraded in the build log and are excluded from any
-            # claim of source coverage.
-            if ! grep -q '<programme' "$out"; then
-              base="$(basename "$out")"
-              if [[ " ${OPTIONAL_ZERO[*]} " == *" $base "* ]]; then
-                echo "DEGRADED optional iptv-org output has zero programmes: $out"
-              else
-                echo "iptv-org output has zero programmes: $out"; exit 1
-              fi
-            fi
-          done
+          [ "$IO_FAIL" = "0" ] || { echo "one or more required iptv-org grabs failed"; exit 1; }
+          python3 "$WS/pipeline/source_registry.py" validate-outputs \
+            --prefix "$WS/data" --status-out "$WS/data/iptv_org_status.json"
 
           # --- custom fetchers (background; only need streams.json) ---
           # AUDIT-4 F-02: bare `wait` returned 0 even when a child failed.
@@ -217,21 +210,27 @@ jobs:
           python3 - "$WS/data" <<'PYEOF'
           import os, sys
           d = sys.argv[1]
-          expected = 'io_jiotv.xml io_tataplay.xml io_dishtv.xml io_airtel.xml io_zee5.xml io_tvpassport.com.xml io_tv24.co.uk.xml io_tvireland.ie.xml io_www.magenta.tv.xml io_web.magentatv.de.xml io_tv.blue.ch.xml io_abc.net.au.xml io_foxtel.com.au.xml io_tvhebdo.com.xml io_programetv.ro.xml io_programacion-tv.elpais.com.xml io_movistarplus.es.xml io_programme-tv.net.xml io_meo.pt.xml io_guidatv.sky.it.xml io_cosmotetv.gr.xml io_cyta.com.cy.xml io_allente.se.xml io_epg.112114.xyz.xml io_gigatv.3bbtv.co.th.xml io_tvinsider.com.xml io_tv24.se.xml io_mujtvprogram.cz.xml io_tvmustra.hu.xml io_nostv.pt.xml io_tv.trueid.net.xml'.split()
+          expected = __import__('subprocess').check_output([
+              sys.executable, os.path.join(os.environ['GITHUB_WORKSPACE'], 'pipeline/source_registry.py'),
+              'outputs'
+          ], text=True).split()
           missing = [f for f in expected if not os.path.exists(os.path.join(d, f)) or os.path.getsize(os.path.join(d, f)) < 1024]
           print(f'WARN: {len(missing)} grab outputs missing/empty: {missing}' if missing else 'all grab outputs present')
           PYEOF
 
       - name: Download epg.pw + epgshare01 + index sources
         env:
-          IPTV_ORG_FILES: "data/io_jiotv.xml,data/io_tataplay.xml,data/io_dishtv.xml,data/io_airtel.xml,data/io_zee5.xml,data/io_tvpassport.com.xml,data/io_tv24.co.uk.xml,data/io_tvireland.ie.xml,data/io_www.magenta.tv.xml,data/io_web.magentatv.de.xml,data/io_tv.blue.ch.xml,data/io_abc.net.au.xml,data/io_foxtel.com.au.xml,data/io_tvhebdo.com.xml,data/io_programetv.ro.xml,data/io_programacion-tv.elpais.com.xml,data/io_movistarplus.es.xml,data/io_programme-tv.net.xml,data/io_meo.pt.xml,data/io_guidatv.sky.it.xml,data/io_cosmotetv.gr.xml,data/io_cyta.com.cy.xml,data/io_allente.se.xml,data/io_epg.112114.xyz.xml,data/io_gigatv.3bbtv.co.th.xml,data/io_tvinsider.com.xml,data/io_tv24.se.xml,data/io_mujtvprogram.cz.xml,data/io_tvmustra.hu.xml,data/io_nostv.pt.xml,data/io_tv.trueid.net.xml"
           SKYHAWK_FILE: "data/skyhawk.xml"
           DSTV_FILE: "data/dstv.xml"
           EPGONE_FILE: "data/epgone_cis.xml"
           ALLENTE_FILE: "data/allente.xml"
           TEAMS_FILE: "data/teamfixtures.xml"
           BBCRADIO_FILE: "data/bbcradio.xml"
-        run: python3 pipeline/fetch_sources.py ./data
+        run: |
+          IPTV_ORG_FILES="$(python3 pipeline/source_registry.py files --prefix data --usable-only)"
+          [ -n "$IPTV_ORG_FILES" ] || { echo "source registry returned no usable iptv-org files"; exit 1; }
+          export IPTV_ORG_FILES
+          python3 pipeline/fetch_sources.py ./data
 
       - name: "Required-source gate (fail-closed)"
         run: |
