@@ -47,6 +47,12 @@ def load_source_registry(path=DEFAULT_REGISTRY):
             raise ValueError("countries must be a non-empty country-code list")
         if type(source["min_programmes"]) is not int or source["min_programmes"] < 1:
             raise ValueError("min_programmes must be an integer of at least 1")
+        if "region_suffixes" in source:
+            suffixes = source["region_suffixes"]
+            if (not isinstance(suffixes, list)
+                    or not all(isinstance(x, str) and re.fullmatch(r"_[A-Za-z0-9-]+", x)
+                               for x in suffixes)):
+                raise ValueError("region_suffixes must be a list of safe suffixes")
         output = pathlib.PurePath(source["output"])
         if (output.name != source["output"]
                 or not re.fullmatch(r"io_[A-Za-z0-9._-]+\.xml", source["output"])):
@@ -91,7 +97,19 @@ def validate_iptv_org_outputs(data_dir, path=DEFAULT_REGISTRY):
                 root = ET.parse(output).getroot()
                 if root.tag != "tv":
                     raise ValueError("root element is not tv")
-                programmes = sum(1 for _ in root.iter("programme"))
+                channel_ids = {
+                    channel.get("id") for channel in root.iter("channel")
+                    if channel.get("id")
+                }
+                valid_programmes = []
+                for programme in root.iter("programme"):
+                    title = programme.find("title")
+                    if (programme.get("channel") in channel_ids
+                            and programme.get("start")
+                            and programme.get("stop") and title is not None
+                            and (title.text or "").strip()):
+                        valid_programmes.append(programme)
+                programmes = len(valid_programmes)
                 if programmes < source["min_programmes"]:
                     reason = "too_few_programmes"
             except (ET.ParseError, ValueError):
@@ -114,8 +132,10 @@ def validate_iptv_org_outputs(data_dir, path=DEFAULT_REGISTRY):
     return statuses, failures
 
 
-def registry_files(prefix="data", path=DEFAULT_REGISTRY, usable_only=False):
-    sources = iptv_org_sources(path)
+def registry_files(
+    prefix="data", path=DEFAULT_REGISTRY, usable_only=False, filtered=None
+):
+    sources = iptv_org_sources(path, filtered=filtered)
     if usable_only:
         statuses, _ = validate_iptv_org_outputs(prefix, path)
         usable = {row["output"] for row in statuses if row["usable"]}
@@ -168,7 +188,8 @@ def main(argv=None):
         print(" ".join(source["output"] for source in sources))
     else:
         print(",".join(registry_files(
-            args.prefix, args.registry, usable_only=args.usable_only
+            args.prefix, args.registry, usable_only=args.usable_only,
+            filtered=filtered,
         )))
 
 
