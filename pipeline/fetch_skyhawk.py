@@ -35,8 +35,11 @@ from matcher import norm
 from build_mapping import NAME_ALIASES
 
 UA = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'}
-CHANNELS_URL = ('https://raw.githubusercontent.com/iptv-org/epg/master/'
-                'sites/sky.com/sky.com.channels.xml')
+IPTV_ORG_EPG_REF = os.environ.get(
+    'IPTV_ORG_EPG_REF', '51fcb160fe9a521cb8d4081edf4ead94ac48f712'
+)
+CHANNELS_URL = ('https://raw.githubusercontent.com/iptv-org/epg/'
+                + IPTV_ORG_EPG_REF + '/sites/sky.com/sky.com.channels.xml')
 SCHEDULE_URL = 'https://awk.epgsky.com/hawk/linear/schedule/{date}/{sids}'
 
 TERRITORIES = ('GB', 'DE', 'IT')
