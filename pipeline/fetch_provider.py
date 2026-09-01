@@ -14,6 +14,7 @@ env vars). Outputs to <outdir>/:
 import json
 import os
 import sys
+import time
 import urllib.request
 
 UA = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'}
@@ -22,6 +23,22 @@ UA = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit
 def fetch(url, timeout=180):
     req = urllib.request.Request(url, headers=UA)
     return urllib.request.urlopen(req, timeout=timeout).read()
+
+
+def fetch_with_retry(url, timeout=180, attempts=3, delay=2, fetcher=fetch):
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return fetcher(url, timeout=timeout)
+        except Exception as error:  # noqa: BLE001
+            last_error = error
+            if attempt < attempts:
+                print(
+                    f'Fetch attempt {attempt}/{attempts} failed: {error}; retrying',
+                    file=sys.stderr,
+                )
+                time.sleep(delay)
+    raise last_error
 
 
 def main():
@@ -68,14 +85,20 @@ def main():
     json.dump(cats, open(f'{outdir}/categories_raw.json', 'w'))
     print(f'Streams: {len(streams)} | Categories: {len(cats)}')
 
-    # Provider XMLTV (may be large; tolerate absence)
-    provider_xml = b''
+    # Provider XMLTV is a required fallback source. Retry transient panel
+    # failures here and stop early if all attempts fail.
     try:
-        provider_xml = fetch(f'{base}/xmltv.php?{auth}', timeout=240)
-        open(f'{outdir}/provider.xml', 'wb').write(provider_xml)
-        print(f'Provider XMLTV: {len(provider_xml)} bytes')
+        provider_xml = fetch_with_retry(
+            f'{base}/xmltv.php?{auth}', timeout=240, attempts=3, delay=5
+        )
     except Exception as e:  # noqa: BLE001
-        print(f'Provider XMLTV fetch failed (continuing): {e}', file=sys.stderr)
+        print(f'FATAL: provider XMLTV fetch failed after retries: {e}', file=sys.stderr)
+        sys.exit(1)
+    if not provider_xml:
+        print('FATAL: provider XMLTV response was empty', file=sys.stderr)
+        sys.exit(1)
+    open(f'{outdir}/provider.xml', 'wb').write(provider_xml)
+    print(f'Provider XMLTV: {len(provider_xml)} bytes')
 
     # Enriched streams.json — keep epg_channel_id!
     cat_map = {c['category_id']: c['category_name'] for c in cats}
