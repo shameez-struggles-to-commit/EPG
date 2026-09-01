@@ -135,13 +135,21 @@ NON_LINEAR_KEYWORDS = (
 # (21 verified in daily sources: BBC Radio 2/3/4 via epgshare01 BE2, Classic
 # FM/Heart/Planet Rock via epg.pw, etc.). The dedicated 'bbcradio' fetcher
 # covers the BBC locals separately (stream-name-keyed, bypasses this table).
-RADIO_LINEAR_NORMS = {
-    'bbc radio 1xtra', 'bbc radio 2', 'bbc radio 3', 'bbc radio 4',
-    'bbc radio 4 extra', 'bbc radio london', 'classic fm', 'classic rock',
-    'gold', 'greatest hits', 'heart 80s', 'heart 90s', 'heart dance',
-    'kerrang', 'magic fm', 'planet rock', 'radio x', 'rte radio 1',
-    'talksport', 'virgin radio',
-}
+# 2026-09-01 fix: the set is COMPUTED from display names — hand-written keys
+# like 'heart 80s' can never equal norm() output 'heart 80 s' (digit/letter
+# boundary split), which silently broke every digit-adjacent key. Added 4
+# stations verified live in UK1/BE2 (BBC Radio 6 Music, BBC Radio Sussex,
+# Absolute Radio 80s/90s).
+RADIO_LINEAR_NAMES = (
+    'BBC Radio 1Xtra', 'BBC Radio 2', 'BBC Radio 3', 'BBC Radio 4',
+    'BBC Radio 4 Extra', 'BBC Radio London', 'Classic FM', 'Classic Rock',
+    'Gold', 'Greatest Hits', 'Heart 80s', 'Heart 90s', 'Heart Dance',
+    'Kerrang', 'Magic FM', 'Planet Rock', 'Radio X', 'RTE Radio 1',
+    'talkSPORT', 'Virgin Radio',
+    'BBC Radio 6 Music', 'BBC Radio Sussex',
+    'Absolute Radio 80s', 'Absolute Radio 90s',
+)
+RADIO_LINEAR_NORMS = {norm(n) for n in RADIO_LINEAR_NAMES}
 
 # Channel-NAME patterns for event-only slots (2026-08-15 audit: these carry
 # match-day feeds only — no published schedule exists, so chasing EPG for

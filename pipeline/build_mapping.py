@@ -34,13 +34,35 @@ import sys
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from matcher import SourceIndex, norm, is_non_linear, cyr_to_lat
+from matcher import (SourceIndex, norm, is_non_linear, cyr_to_lat,
+                     RADIO_LINEAR_NORMS)
 from source_registry import iptv_org_countries
 
 TIER = {
     'pk': 0, 'iptv-org': 1, 'skyhawk': 2, 'dstv': 2, 'epgone': 2,
     'bein': 2, 'teamfixtures': 2, 'allente': 2, 'cyta': 2, 'greek': 2,
     'plutofast': 2, 'bbcradio': 2, 'epgshare01': 3, 'epg.pw': 4, 'provider': 5,
+}
+
+# Wrong-feed firewall (2026-09-01 monthly audit, Round-7 findings now live in
+# the deployed guide). Keyed by immutable stream_id; each entry is a set of
+# (source, source_id) candidates that are IDENTITY-WRONG for that stream and
+# must never be selected. Measured against the deployed guide before adding:
+#   618063 ATV (PK)          -> epg.pw 76810 = ATV Austria (German shows)
+#   618068 Capital TV (PK)   -> skyhawk GB#2908 = UK Capital FM radio + the
+#                               epg.pw/UK1 Capital radio namesakes
+#   618097 Hum Masala (PK)   -> UK1 HUM.Masala.uk carries Hum NEWS programming
+#                               (Hum News stream 618098 covers that separately
+#                               via skyhawk); real Hum Masala = cooking shows
+#   618051/175549 92 News    -> provider epg-id 4seven.uk is panel junk (UK
+#                               channel mapped by the panel itself)
+WRONG_FEED_DENY = {
+    '618063': {('epg.pw', '76810')},
+    '618068': {('skyhawk', 'GB#2908'), ('epg.pw', '12210'),
+               ('epgshare01:UK1', 'Capital.uk')},
+    '618097': {('epgshare01:UK1', 'HUM.Masala.uk'), ('epg.pw', '12034')},
+    '618051': {('provider', '4seven.uk')},
+    '175549': {('provider', '4seven.uk')},
 }
 
 PK_OVERRIDES = {
@@ -215,14 +237,33 @@ DIASPORA_EXACT = {
     'UK': ['epgshare01:IN1', 'epgshare01:IN4', 'tvepg'],
     'US': ['epgshare01:IN1', 'epgshare01:IN4', 'tvepg', 'epgshare01:ASIANTELEVISION1'],
     'CA': ['epgshare01:IN1', 'epgshare01:IN4', 'tvepg', 'epgshare01:ASIANTELEVISION1'],
+    # 2026-09-01: Filipino diaspora — GMA Pinoy/Life/News TV + ABS-CBN News
+    # are US/CA-carried international feeds of real PH channels (verified live
+    # in US2: GMA.Pinoy.TV.us2, GMA.Life.TV.us2, ABS-CBN.News.Channel.us2;
+    # CA2: GMA.Pinoy.TV.ca2). EXACT only. PH is further name-gated below:
+    # generic multinational brands (Comedy Central, Disney, "One") also sit in
+    # US2 but their US schedules differ from the SEA feeds — only distinctly
+    # Filipino names may pass.
+    'PH': ['epgshare01:US2', 'epgshare01:CA2'],
+}
+
+# Names allowed through the diaspora path per country, where a bare country
+# entry would over-match. PH: distinctive Filipino channel names only.
+DIASPORA_NAME_RES = {
+    'PH': re.compile(r'\b(?:GMA|ABS[ -]?CBN|Kapatid|TFC|Cinema One|Myx|Goin Bulilit)\b', re.I),
 }
 
 
-def diaspora_allowed(src, cc):
+def diaspora_allowed(src, cc, name=None):
     """Exact-match-only: is this source a diaspora carrier for country cc?"""
     if not cc:
         return False
-    return src in DIASPORA_EXACT.get(cc, [])
+    if src not in DIASPORA_EXACT.get(cc, []):
+        return False
+    rx = DIASPORA_NAME_RES.get(cc)
+    if rx and name is not None and not rx.search(name):
+        return False
+    return True
 
 
 def is_real_epg_id(v):
@@ -547,6 +588,22 @@ def main():
             if nm and 'radio' in (s.get('cat_name') or '').lower():
                 if src_idx['bbcradio'].exact(nm):
                     dedicated_rescue[nm] = 'bbcradio'
+    # Radio pack rescue (2026-09-01): countryless provider radio streams
+    # (cat "Radio" or "") cannot reach epgshare01 UK1/BE2 — no country means
+    # no allowed set. The reviewed RADIO_LINEAR_NORMS allowlist names verified
+    # UK services; an exact hit in UK1/BE2 rescues them the same way (exact
+    # only, single source, no fuzzy/provider fallback). MUST stay restricted
+    # to radio-categorized or categoryless streams — a TV channel named
+    # "Gold TV" (IT) is not the UK GOLD radio station.
+    for s in streams:
+        nm = (s.get('name') or '').strip()
+        cat_l = (s.get('cat_name') or '').lower()
+        if (nm and norm(nm) in RADIO_LINEAR_NORMS and nm not in dedicated_rescue
+                and ('radio' in cat_l or not cat_l.strip())):
+            for rsrc in ('epgshare01:UK1', 'epgshare01:BE2'):
+                if rsrc in src_idx and src_idx[rsrc].exact(nm):
+                    dedicated_rescue[nm] = rsrc
+                    break
 
     prov_by_name = {}
     provider_programme_names = set()
@@ -585,9 +642,12 @@ def main():
             and not is_event_only_stream(name, cat)
         )
         # Categoryless radio names are not safely matchable by global fuzzy
-        # search. A reviewed bbcradio exact rescue may still pass above.
+        # search. A reviewed bbcradio exact rescue may still pass above, and
+        # the reviewed RADIO_LINEAR_NORMS allowlist (exact-name only) is exempt
+        # — those are verified UK services with live source data.
         unnamed_radio = (cc is None and re.search(r'\bradio\b', name, re.I)
-                         and not rescue_src)
+                         and not rescue_src
+                         and norm(name) not in RADIO_LINEAR_NORMS)
         if (is_non_linear(cat, name) or unnamed_radio or is_event_only_stream(name, cat)) and not team_claimed and not rescue_src and not provider_linear_rescue:
             stats['non-linear-skipped'] += 1
             continue
@@ -631,17 +691,17 @@ def main():
             for src in name_sources:
                 alias_diaspora = False
                 if src.startswith('epgshare01') and src not in allowed_eshare:
-                    if not diaspora_allowed(src, cc):
+                    if not diaspora_allowed(src, cc, name):
                         continue
                     alias_diaspora = True
                 if src in FETCHER_COUNTRIES and cc and cc not in FETCHER_COUNTRIES[src]:
                     continue
                 if src.startswith('iptv-org') and not iptv_org_allowed(src, cc):
-                    if not diaspora_allowed(src, cc):
+                    if not diaspora_allowed(src, cc, name):
                         continue
                     alias_diaspora = True
                 if src == 'tvepg' and cc and cc != 'IN':
-                    if not diaspora_allowed(src, cc):
+                    if not diaspora_allowed(src, cc, name):
                         continue
                     alias_diaspora = True
                 eids = src_idx[src].exact(alias)
@@ -684,15 +744,15 @@ def main():
         #    dedicated fetchers / iptv-org / tvepg; diaspora-exact fallback)
         for src in name_sources:
             if src.startswith('epgshare01') and src not in allowed_eshare:
-                if not diaspora_allowed(src, cc):
+                if not diaspora_allowed(src, cc, name):
                     continue
             if src in FETCHER_COUNTRIES and cc and cc not in FETCHER_COUNTRIES[src]:
                 continue
             if src.startswith('iptv-org') and not iptv_org_allowed(src, cc):
-                if not diaspora_allowed(src, cc):
+                if not diaspora_allowed(src, cc, name):
                     continue
             if src == 'tvepg' and cc and cc != 'IN':
-                if not diaspora_allowed(src, cc):
+                if not diaspora_allowed(src, cc, name):
                     continue
             qname = name.strip() if src == 'teamfixtures' else name
             if src == 'epgone':
@@ -819,6 +879,13 @@ def main():
                         continue
                 cands.append((50 + src_tier(src), src, cid, 'fuzzy', round(sc, 2)))
                 stats[f'{src}:fuzzy'] += 1
+
+        # Wrong-feed firewall: drop identity-wrong candidates for this stream
+        # (measured wrong-channel data, e.g. PK ATV -> Austrian ATV). Applied
+        # before sorting so a denied top-tier candidate cannot win the cascade.
+        deny = WRONG_FEED_DENY.get(sid)
+        if deny:
+            cands = [c for c in cands if (c[1], c[2]) not in deny]
 
         if team_claimed:
             # Claimed team streams must never fall through to a broadcaster
