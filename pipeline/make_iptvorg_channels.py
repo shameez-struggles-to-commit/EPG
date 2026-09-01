@@ -26,7 +26,11 @@ from matcher import SourceIndex, norm
 from source_registry import iptv_org_sources, load_source_registry
 
 UA = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'}
-BASE = 'https://raw.githubusercontent.com/iptv-org/epg/master/sites/{dir}/{site}.channels.xml'
+IPTV_ORG_EPG_REF = os.environ.get(
+    'IPTV_ORG_EPG_REF', '51fcb160fe9a521cb8d4081edf4ead94ac48f712'
+)
+BASE = ('https://raw.githubusercontent.com/iptv-org/epg/'
+        + IPTV_ORG_EPG_REF + '/sites/{dir}/{site}.channels.xml')
 
 
 # Filtered sites and region-file rules come from config/sources.json.
@@ -37,7 +41,8 @@ def filtered_sites():
 
 def github_dir_listing(site):
     """Return file names in the site's dir via the GitHub contents API."""
-    url = f'https://api.github.com/repos/iptv-org/epg/contents/sites/{site}'
+    url = (f'https://api.github.com/repos/iptv-org/epg/contents/sites/{site}'
+           f'?ref={IPTV_ORG_EPG_REF}')
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=60) as r:
         return [x['name'] for x in json.loads(r.read().decode('utf-8'))]
@@ -81,7 +86,7 @@ def main():
                 listing = github_dir_listing(d)
                 suffixes = source['region_suffixes']
                 files = [('region', f'https://raw.githubusercontent.com/'
-                                    f'iptv-org/epg/master/sites/{d}/{f}')
+                                    f'iptv-org/epg/{IPTV_ORG_EPG_REF}/sites/{d}/{f}')
                          for f in listing
                          if f.startswith(site + '_') and f.endswith('.channels.xml')
                          and (not suffixes or any(s in f for s in suffixes))]
