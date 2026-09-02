@@ -31,8 +31,10 @@ import os
 import re
 import ssl
 import sys
+import time
 import urllib.request
 from collections import defaultdict
+from urllib.parse import urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from matcher import SourceIndex
@@ -147,6 +149,69 @@ def download(url, dest, timeout=300, insecure=False):
     return len(data)
 
 
+def host_of(url):
+    return urlsplit(url).hostname or ''
+
+
+class SourceFetchTracker:
+    """Records per-source fetch outcomes for the fetch_status.json artifact.
+
+    Allowlisted content only: source name, host, ok/failed/skipped, attempts,
+    error summary. Never file contents or credentials."""
+
+    def __init__(self, outdir):
+        self.outdir = outdir
+        self.entries = []
+
+    def record(self, source, url, status, attempts=1, error=None):
+        self.entries.append({
+            'source': source,
+            'host': host_of(url),
+            'status': status,  # ok | failed | skipped
+            'attempts': attempts,
+            'error': (str(error)[:200] if error else None),
+        })
+
+    def write(self):
+        path = os.path.join(self.outdir, 'fetch_status.json')
+        tmp = path + '.tmp'
+        json.dump(self.entries, open(tmp, 'w'), indent=1)
+        os.replace(tmp, path)
+        n_ok = sum(1 for e in self.entries if e['status'] == 'ok')
+        n_failed = len(self.entries) - n_ok - sum(1 for e in self.entries if e['status'] == 'skipped')
+        print(f'[status] fetch_status.json: {len(self.entries)} sources '
+              f'({n_ok} ok, {n_failed} failed) -> {path}')
+
+
+RETRY_ATTEMPTS = 3
+RETRY_DELAY_S = 5.0
+
+
+def fetch_source_with_retry(url, dest, attempts=RETRY_ATTEMPTS,
+                            delay=RETRY_DELAY_S, download=None):
+    """download() with bounded retry + exponential backoff.
+
+    Transient-error hardening only — a sustained multi-minute host outage
+    (e.g. epgshare01 2026-09-02) will still exhaust these attempts. The
+    host circuit-breaker in main() prevents retry amplification across the
+    many files that share one host. `download` is resolved at CALL time so
+    tests (and future callers) can inject a fake via module patching."""
+    if download is None:
+        download = globals()['download']
+    last_error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return download(url, dest), attempt
+        except Exception as e:  # noqa: BLE001
+            last_error = e
+            if attempt < attempts:
+                print(f'[retry] {host_of(url)} attempt {attempt}/{attempts} '
+                      f'failed: {e}; retrying in {delay}s', file=sys.stderr)
+                time.sleep(delay)
+                delay *= 2
+    raise last_error
+
+
 def read_xml(path):
     if path.endswith('.gz'):
         return gzip.open(path, 'rb').read().decode('utf-8', errors='ignore')
@@ -207,6 +272,34 @@ def build_callsign_index(path):
 def main():
     outdir = sys.argv[1] if len(sys.argv) > 1 else './data'
     os.makedirs(outdir, exist_ok=True)
+    tracker = SourceFetchTracker(outdir)
+    # Host circuit breaker: after BREAK_AFTER consecutive full-failure files
+    # on one host, remaining files on that host are skipped without retry.
+    # A host-wide outage (epgshare01 2026-09-02) then costs one probed file,
+    # not 43 x 3 attempts of guaranteed-failing requests.
+    host_failures = defaultdict(int)
+    BREAK_AFTER = 3
+
+    def guarded(source, url, dest):
+        """Fetch one source with retry + circuit breaker; track the outcome."""
+        host = host_of(url)
+        if host_failures[host] >= BREAK_AFTER:
+            tracker.record(source, url, 'skipped', attempts=0,
+                           error=f'host breaker open ({host_failures[host]} consecutive failures)')
+            print(f'[breaker] {source}: skipped, host {host} failing', file=sys.stderr)
+            return False
+        try:
+            n, used = fetch_source_with_retry(url, dest)
+            print(f'[{source}] {n} bytes')
+            manifest.append({'source': source, 'file': os.path.abspath(dest), 'kind': 'name'})
+            host_failures[host] = 0
+            tracker.record(source, url, 'ok', attempts=used)
+            return True
+        except Exception as e:  # noqa: BLE001
+            host_failures[host] += 1
+            tracker.record(source, url, 'failed', attempts=RETRY_ATTEMPTS, error=e)
+            print(f'[{source}] FAILED: {e}', file=sys.stderr)
+            return False
 
     files = os.environ.get('ESHARE_FILES', '').split(',')
     files = [f.strip() for f in files if f.strip()] or ESHARE_FILES
@@ -214,68 +307,33 @@ def main():
     manifest = []
     # epg.pw
     pw_path = os.path.join(outdir, 'epgpw_global.xml.gz')
-    try:
-        n = download(EPG_PW_URL, pw_path)
-        print(f'[epg.pw] {n} bytes -> {pw_path}')
-        manifest.append({'source': 'epg.pw', 'file': os.path.abspath(pw_path), 'kind': 'name'})
-    except Exception as e:  # noqa: BLE001
-        print(f'[epg.pw] FAILED: {e}', file=sys.stderr)
+    guarded('epg.pw', EPG_PW_URL, pw_path)
 
     # epgshare01
     for name in files:
         dest = os.path.join(outdir, f'es_{name}.xml.gz')
         url = ESHARE_BASE.format(name)
-        try:
-            n = download(url, dest)
-            print(f'[epgshare01] {name}: {n} bytes')
-            manifest.append({'source': f'epgshare01:{name}', 'file': os.path.abspath(dest), 'kind': 'name'})
-        except Exception as e:  # noqa: BLE001
-            print(f'[epgshare01] {name} FAILED: {e}', file=sys.stderr)
+        guarded(f'epgshare01:{name}', url, dest)
 
     # mitthu786/tvepg — India OTT EPG (one AIO file, 1500+ channels)
     tvepg_path = os.path.join(outdir, 'tvepg_india.xml.gz')
-    try:
-        n = download(TVEPG_URL, tvepg_path)
-        print(f'[tvepg] {n} bytes')
-        manifest.append({'source': 'tvepg', 'file': os.path.abspath(tvepg_path), 'kind': 'name'})
-    except Exception as e:  # noqa: BLE001
-        print(f'[tvepg] FAILED: {e}', file=sys.stderr)
+    guarded('tvepg', TVEPG_URL, tvepg_path)
 
     # al7omed/bein-epg — beIN MENA sports (39 channels, self-updating)
     bein_path = os.path.join(outdir, 'bein_mena.xml')
-    try:
-        n = download(BEIN_URL, bein_path)
-        print(f'[bein] {n} bytes')
-        manifest.append({'source': 'bein', 'file': os.path.abspath(bein_path), 'kind': 'name'})
-    except Exception as e:  # noqa: BLE001
-        print(f'[bein] FAILED: {e}', file=sys.stderr)
+    guarded('bein', BEIN_URL, bein_path)
 
     # CyTA Cyprus pack (NOVA bouquet + Cypriot linears)
     cyta_path = os.path.join(outdir, 'cyta_pack.xml')
-    try:
-        n = download(CYTA_URL, cyta_path)
-        print(f'[cyta] {n} bytes')
-        manifest.append({'source': 'cyta', 'file': os.path.abspath(cyta_path), 'kind': 'name'})
-    except Exception as e:  # noqa: BLE001
-        print(f'[cyta] FAILED: {e}', file=sys.stderr)
+    guarded('cyta', CYTA_URL, cyta_path)
 
     # chrisliatas/greek-xmltv (Digea DTT + ERT, daily release)
     greek_path = os.path.join(outdir, 'greek_pack.xml.gz')
-    try:
-        n = download(GREEK_URL, greek_path)
-        print(f'[greek] {n} bytes')
-        manifest.append({'source': 'greek', 'file': os.path.abspath(greek_path), 'kind': 'name'})
-    except Exception as e:  # noqa: BLE001
-        print(f'[greek] FAILED: {e}', file=sys.stderr)
+    guarded('greek', GREEK_URL, greek_path)
 
     # i.mjh.nz PlutoTV US (FAST 24/7 loop channels)
     pluto_path = os.path.join(outdir, 'plutofast.xml.gz')
-    try:
-        n = download(PLUTOFAST_URL, pluto_path)
-        print(f'[plutofast] {n} bytes')
-        manifest.append({'source': 'plutofast', 'file': os.path.abspath(pluto_path), 'kind': 'name'})
-    except Exception as e:  # noqa: BLE001
-        print(f'[plutofast] FAILED: {e}', file=sys.stderr)
+    guarded('plutofast', PLUTOFAST_URL, pluto_path)
 
     # dedicated fetcher outputs (generated earlier by the workflow step):
     #   ALLENTE_FILE / TEAMS_FILE / BBCRADIO_FILE (name-indexed like the others)
@@ -343,6 +401,7 @@ def main():
                 print(f'[index] {m["source"]} FAILED: {e}', file=sys.stderr)
     json.dump(index, open(os.path.join(outdir, 'sources_index.json'), 'w'))
     json.dump(callsigns, open(os.path.join(outdir, 'call_signs.json'), 'w'))
+    tracker.write()
     print(f'done: {len(manifest)} sources, {len(index)} indexed')
 
 
