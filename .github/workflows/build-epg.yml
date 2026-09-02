@@ -504,6 +504,26 @@ jobs:
           STATUS=${STATUS:-000}
           SIZE=${SIZE:-0}
           SUMMARY="build=$BUILD_RESULT deploy=$DEPLOY_RESULT health=$HEALTH_RESULT live=HTTP-$STATUS/${SIZE}B"
+          # Name the exact failed fetch sources from the allowlisted status file.
+          if [ -f diagnostics/fetch_status.json ]; then
+            FAILED_SOURCES=$(python3 - <<'PYEOF'
+          import json
+          try:
+              entries = json.load(open('diagnostics/fetch_status.json'))
+              bad = [e['source'] for e in entries if e.get('status') == 'failed']
+              skipped = [e['source'] for e in entries if e.get('status') == 'skipped']
+              parts = []
+              if bad:
+                  parts.append('failed=' + ','.join(bad))
+              if skipped:
+                  parts.append('skipped=' + ','.join(skipped))
+              print('; '.join(parts))
+          except Exception:
+              pass
+          PYEOF
+          )
+            [ -n "$FAILED_SOURCES" ] && SUMMARY="$SUMMARY sources[$FAILED_SOURCES]"
+          fi
           echo "$SUMMARY"
           if [ -n "$NTFY_URL" ] && [ -n "$NTFY_TOKEN" ] && [ -n "$NTFY_TOPIC" ]; then
             HEADER_NAME="Authori""zation"
