@@ -25,7 +25,8 @@ EMPTY_ENV = {
 }
 
 
-FEED = b'<tv></tv>'
+FEED = (b'<tv><channel id="test.ch"><display-name>Test Channel One'
+        b'</display-name></channel></tv>')
 
 
 def write_feed(path, body=FEED):
@@ -191,6 +192,12 @@ class TestHostBreaker(unittest.TestCase):
             index = json.load(open(os.path.join(td, 'sources_index.json')))
             self.assertIn('epgshare01:B1', index)
             self.assertNotIn('epgshare01:A1', index)
+            # the index must be USABLE, not just present: the fixture's one
+            # channel (Test Channel One, id test.ch) must be indexed for the
+            # ok source — an empty {} index would otherwise pass (round-2
+            # review finding). norm() strips 'channel' as filler -> 'test one'.
+            self.assertEqual(index['epgshare01:B1'].get('test one'),
+                             ['test.ch'])
 
 
 class TestStatusShape(unittest.TestCase):
