@@ -1,4 +1,5 @@
 import argparse
+import base64
 import contextlib
 import datetime as dt
 import io
@@ -11,6 +12,7 @@ import time
 import unittest
 import warnings
 import zipfile
+import zlib
 from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -22,6 +24,12 @@ from ops.epg_github_watchdog import (
     DiagnosticReader,
     DuplicateTick,
     DeadlineRunner,
+    FINAL_NOTIFICATION_SECONDS,
+    LOCAL_HEADROOM_SECONDS,
+    NORMAL_WORK_SECONDS,
+    PENDING_DIAGNOSTIC_ADMISSION_SECONDS,
+    PROCESS_CLEANUP_SECONDS,
+    TICK_LIMIT_SECONDS,
     GitHubAdapter,
     GitHubError,
     HermesNotifier,
@@ -73,14 +81,25 @@ def make_duplicate_zip(name, first, second):
     return buffer.getvalue()
 
 
-def artifact_for(run_id=101):
+def artifact_for(run_id=101, run_attempt=1):
     return {
         "id": 88,
-        "name": "epg-diagnostics-1",
+        "name": "epg-diagnostics-%d" % run_attempt,
         "expired": False,
         "expires_at": "2099-01-01T00:00:00Z",
         "size_in_bytes": 256,
         "workflow_run": {"id": run_id, "head_branch": "main"},
+    }
+
+
+def pending_for(run_id=101, run_attempt=1,
+                first="2026-09-04T18:00:00Z",
+                deadline="2026-09-18T18:00:00Z"):
+    return {
+        "run_id": run_id,
+        "run_attempt": run_attempt,
+        "first_observed_at": first,
+        "deadline_at": deadline,
     }
 
 
@@ -168,7 +187,9 @@ class FakeGitHub:
     def download_artifact(self, artifact_id):
         return self.archive
 
-    def dispatch_recovery(self, watchdog_id):
+    def dispatch_recovery(self, watchdog_id, start_tracker=None):
+        if start_tracker is not None:
+            start_tracker.started = True
         self.dispatches.append(watchdog_id)
         return type("Dispatch", (), {"http_status": 204, "workflow_run_id": None, "workflow_run_url": None})()
 
@@ -398,6 +419,16 @@ class ClassifierTest(unittest.TestCase):
             path.write_text('{"schema_version": 99, "days": {}}', encoding="utf-8")
             with self.assertRaises(StateError):
                 store.load()
+
+    def test_deeply_nested_state_is_rejected_without_recursion_crash(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = pathlib.Path(td) / "state.json"
+            lock = pathlib.Path(td) / "watchdog.lock"
+            nested = "[" * 1200 + "0" + "]" * 1200
+            path.write_text(nested, encoding="utf-8")
+            with self.assertRaises(StateError):
+                StateStore(path, lock).load()
+            self.assertEqual(path.read_text(encoding="utf-8"), nested)
     def test_state_rejects_incomplete_day_records(self):
         with tempfile.TemporaryDirectory() as td:
             path = pathlib.Path(td) / "state.json"
@@ -412,6 +443,147 @@ class ClassifierTest(unittest.TestCase):
             with self.assertRaises(StateError):
                 StateStore(path, lock).load()
 
+    def test_schema_one_is_not_migrated_or_dispatchable(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = pathlib.Path(td) / "state.json"
+            lock = pathlib.Path(td) / "watchdog.lock"
+            original = '{"schema_version":1,"days":{}}'
+            path.write_text(original, encoding="utf-8")
+            github = FakeGitHub([])
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier,
+                store=StateStore(path, lock),
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+            ).tick()
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(github.dispatches, [])
+            self.assertEqual(github.workflow_calls, 0)
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+            self.assertEqual(notifier.calls, [("ntfy:alerts", "event=state-error state=unreadable")])
+
+    def test_schema_two_default_record_has_nullable_pending_diagnostic(self):
+        record = default_day_record("2026-09-04")
+        self.assertEqual(record["pending_diagnostic"], None)
+        self.assertEqual(record["production_run_attempt"], None)
+
+    def test_schema_two_valid_pending_diagnostic_survives_save_and_load(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            record = store.ensure_day(state, "2026-09-04")
+            record["production_run_id"] = 501
+            record["production_run_attempt"] = 2
+            record["pending_diagnostic"] = pending_for(
+                501, 2, "2026-09-04T18:00:00Z", "2026-09-18T18:00:00Z"
+            )
+            store.save(state)
+            loaded = store.load()
+            self.assertEqual(loaded["schema_version"], 2)
+            self.assertEqual(loaded["days"]["2026-09-04"]["pending_diagnostic"],
+                             pending_for(501, 2, "2026-09-04T18:00:00Z", "2026-09-18T18:00:00Z"))
+
+    def test_pending_diagnostic_rejects_invalid_ids_attempts_and_timestamps(self):
+        invalids = [
+            dict(run_id=True),
+            dict(run_attempt=0),
+            dict(run_attempt=True),
+            dict(first_observed_at="2026-09-04T18:00:00+00:00"),
+            dict(first_observed_at="2026-02-30T18:00:00Z"),
+            dict(deadline="2026-09-04T17:59:59Z"),
+            dict(deadline="2026-09-19T18:00:00Z"),
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            for changes in invalids:
+                state = store.load()
+                record = store.ensure_day(state, "2026-09-04")
+                record["production_run_id"] = 501
+                record["production_run_attempt"] = 2
+                value = pending_for(501, 2)
+                value.update(changes)
+                record["pending_diagnostic"] = value
+                with self.assertRaises(StateError):
+                    store.save(state)
+
+    def test_pending_diagnostic_rejects_non_object_values(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            for value in ({}, [], "bad", True):
+                state = store.load()
+                record = store.ensure_day(state, "2026-09-04")
+                record["production_run_id"] = 501
+                record["production_run_attempt"] = 1
+                record["pending_diagnostic"] = value
+                with self.assertRaises(StateError):
+                    store.save(state)
+
+
+    def test_pending_diagnostic_requires_matching_production_identity_and_nonterminal_state(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            cases = [
+                {"production_run_id": None, "production_run_attempt": None},
+                {"production_run_id": 501, "production_run_attempt": 2,
+                 "pending_diagnostic": pending_for(502, 2)},
+                {"production_run_id": 501, "production_run_attempt": 2,
+                 "pending_diagnostic": pending_for(501, 1)},
+                {"production_run_id": 501, "production_run_attempt": 2,
+                 "terminal": True},
+                {"production_run_id": 501, "production_run_attempt": 2,
+                 "final_outcome": "healthy"},
+            ]
+            for changes in cases:
+                state = store.load()
+                record = store.ensure_day(state, "2026-09-04")
+                record["production_run_id"] = 501
+                record["production_run_attempt"] = 2
+                record["pending_diagnostic"] = pending_for(501, 2)
+                record.update(changes)
+                with self.assertRaises(StateError):
+                    store.save(state)
+
+    def test_schema_two_dispatch_api_result_accepts_only_redacted_contract(self):
+        valid = [
+            {"status": "accepted", "http_status": 204},
+            {"status": "accepted", "http_status": 200, "workflow_run_id": 777},
+            {"status": "uncertain"},
+        ]
+        invalid = [
+            {"http_status": 204},
+            {"status": "accepted", "http_status": 201},
+            {"status": "accepted", "http_status": 200},
+            {"status": "accepted", "http_status": 200, "workflow_run_id": True},
+            {"status": "uncertain", "error": "raw stderr"},
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            for result in valid:
+                state = store.load()
+                record = store.ensure_day(state, "2026-09-04")
+                record["dispatch_attempted"] = True
+                record["dispatch_requested_at"] = "2026-09-04T18:00:00Z"
+                record["watchdog_id"] = "2026-09-04.0123456789abcdef0123456789abcdef"
+                record["dispatch_api_result"] = result
+                store.save(state)
+            for result in invalid:
+                state = store.load()
+                record = state["days"]["2026-09-04"]
+                record["dispatch_api_result"] = result
+                with self.assertRaises(StateError):
+                    store.save(state)
+
+    def test_pending_diagnostic_cannot_be_compacted_to_tombstone(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            record = store.ensure_day(state, "2026-09-04")
+            record["production_run_id"] = 501
+            record["production_run_attempt"] = 2
+            record["pending_diagnostic"] = pending_for(501, 2)
+            self.assertFalse(store.finalize_day(state, "2026-09-04"))
+            self.assertFalse(record["tombstone"])
+
     def test_dispatch_reservation_is_durable_before_result(self):
         with tempfile.TemporaryDirectory() as td:
             store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
@@ -423,10 +595,10 @@ class ClassifierTest(unittest.TestCase):
             day = loaded["days"]["2026-09-04"]
             self.assertTrue(day["dispatch_attempted"])
             self.assertEqual(day["watchdog_id"], watchdog_id)
-            store.record_dispatch(loaded, "2026-09-04", {"http_status": 204})
+            store.record_dispatch(loaded, "2026-09-04", {"status": "accepted", "http_status": 204})
             final = store.load()["days"]["2026-09-04"]
             self.assertTrue(final["dispatch_attempted"])
-            self.assertEqual(final["dispatch_api_result"]["http_status"], 204)
+            self.assertEqual(final["dispatch_api_result"], {"status": "accepted", "http_status": 204})
     def test_state_requires_complete_reservation_when_dispatch_attempted(self):
         with tempfile.TemporaryDirectory() as td:
             store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
@@ -625,6 +797,22 @@ class ClassifierTest(unittest.TestCase):
             GitHubAdapter("acme/epg", runner=runner).dispatch_recovery(
                 "2026-09-04.0123456789abcdef0123456789abcdef"
             )
+
+    def test_deeply_nested_github_json_is_rejected_without_recursion_crash(self):
+        nested = ("[" * 1200 + "0" + "]" * 1200).encode("utf-8")
+        adapter = GitHubAdapter("acme/epg", runner=BinaryRunner(nested))
+        with self.assertRaises(GitHubError):
+            adapter.list_artifacts(121)
+
+    def test_deeply_nested_dispatch_json_is_rejected_without_recursion_crash(self):
+        nested = ("[" * 1200 + "0" + "]" * 1200).encode("utf-8")
+        adapter = GitHubAdapter(
+            "acme/epg", runner=BinaryRunner(nested, http_status=200)
+        )
+        with self.assertRaises(GitHubError):
+            adapter.dispatch_recovery(
+                "2026-09-04.0123456789abcdef0123456789abcdef"
+            )
     def test_dispatch_rejects_a_success_body_with_unexpected_http_status(self):
         runner = RecordingRunner({
             "workflow_run_id": 777,
@@ -673,6 +861,62 @@ class ClassifierTest(unittest.TestCase):
         runner = RecordingRunner({"total_count": 2, "artifacts": [{"id": 88}]})
         with self.assertRaises(GitHubError):
             GitHubAdapter("acme/epg", runner=runner).list_artifacts(121)
+
+    def test_artifact_list_invalid_utf8_is_retryable_github_error(self):
+        class InvalidUtf8Runner:
+            def run(self, args, timeout, input_data=None):
+                return type("Result", (), {
+                    "returncode": 0,
+                    "stdout": b"\xff",
+                    "stderr": b"",
+                })()
+
+        with self.assertRaises(GitHubError):
+            GitHubAdapter("acme/epg", runner=InvalidUtf8Runner()).list_artifacts(121)
+
+    def test_invalid_utf8_artifact_list_keeps_pending_diagnostic(self):
+        class InvalidUtf8ArtifactGitHub(FakeGitHub):
+            def __init__(self):
+                super().__init__([])
+                self.adapter = GitHubAdapter(
+                    "acme/epg",
+                    runner=type("InvalidUtf8Runner", (), {
+                        "run": lambda self, args, timeout, input_data=None: type(
+                            "Result", (), {
+                                "returncode": 0,
+                                "stdout": b"\xff",
+                                "stderr": b"",
+                            }
+                        )(),
+                    })(),
+                )
+
+            def list_artifacts(self, run_id):
+                return self.adapter.list_artifacts(run_id)
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            record = store.ensure_day(state, "2026-09-04")
+            record["production_run_id"] = 720
+            record["production_run_attempt"] = 1
+            record["pending_diagnostic"] = pending_for(720, 1)
+            due = store.ensure_day(state, "2026-09-05")
+            due["terminal"] = True
+            due["final_outcome"] = "already-complete"
+            store.save(state)
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=InvalidUtf8ArtifactGitHub(),
+                notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 5, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            pending = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertFalse(pending["terminal"])
+            self.assertIsNotNone(pending["pending_diagnostic"])
+            self.assertIn("diagnostic-unavailable", notifier.calls[0][1])
 
     def test_artifact_list_rejects_more_than_one_bounded_page(self):
         runner = RecordingRunner({
@@ -916,6 +1160,80 @@ class ClassifierTest(unittest.TestCase):
         with self.assertRaises(DiagnosticError):
             DiagnosticReader().read(successful, [artifact_for()], archive)
 
+    def test_encrypted_status_member_becomes_terminal_artifact_error(self):
+        encrypted_archive = base64.b64decode(
+            "UEsDBAoACQAAAGVWJV0Qqfk2OQAAAC0AAAAOABwAcGtfc3RhdHVzLmpzb25VVAkAA41WnGqNVpxq"
+            "dXgLAAEE9QEAAAQAAAAAeHgUB0TT/0K5fbT+Lq+0GqfyEv1r12KJkcyEkFpcFCx+J/e41/2M40CY"
+            "710l4oV5o2G3usTAxSQhUEsHCBCp+TY5AAAALQAAAFBLAQIeAwoACQAAAGVWJV0Qqfk2OQAAAC0A"
+            "AAAOABgAAAAAAAEAAACkgQAAAABwa19zdGF0dXMuanNvblVUBQADjVacanV4CwABBPUBAAAEAAAAAF"
+            "BLBQYAAAAAAQABAFQAAACRAAAAAAA="
+        )
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            github = FakeGitHub([run(714)], [artifact_for(714)], encrypted_archive)
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "artifact-error")
+            self.assertIn("artifact-error", notifier.calls[0][1])
+
+    def test_corrupt_compressed_status_member_becomes_terminal_artifact_error(self):
+        corrupt_archive = bytes.fromhex(
+            "504b03041400000008000f5b255d8dbc979506000000640000000e000000706b5f737461747573"
+            "2e6a736f6e7174a43d0000504b010214031400000008000f5b255d8dbc97950600000064000000"
+            "0e0000000000000000000000800100000000706b5f7374617475732e6a736f6e504b0506000000"
+            "00010001003c000000320000000000"
+        )
+        with self.assertRaises(zlib.error):
+            with zipfile.ZipFile(io.BytesIO(corrupt_archive), "r") as archive:
+                archive.read("pk_status.json")
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            github = FakeGitHub([run(719)], [artifact_for(719)], corrupt_archive)
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "artifact-error")
+            self.assertIn("artifact-error", notifier.calls[0][1])
+
+    def test_deeply_nested_status_json_becomes_terminal_artifact_error(self):
+        depth = 100000
+        nested = ("[" * depth + "0" + "]" * depth).encode("utf-8")
+        archive = make_zip("pk_status.json", nested)
+        self.assertLess(len(nested), DiagnosticReader.max_artifact_bytes)
+        self.assertLess(len(archive), DiagnosticReader.max_artifact_bytes)
+        with self.assertRaises(RecursionError):
+            json.loads(nested)
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(
+                pathlib.Path(td) / "state.json",
+                pathlib.Path(td) / "watchdog.lock",
+            )
+            github = FakeGitHub([run(720)], [artifact_for(720)], archive)
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "artifact-error")
+            self.assertIn("artifact-error", notifier.calls[0][1])
+
     def test_notifier_accepts_only_fixed_targets_and_marks_success_after_exit_zero(self):
         runner = RecordingRunner(None)
         notifier = HermesNotifier(runner=runner)
@@ -966,7 +1284,9 @@ class ClassifierTest(unittest.TestCase):
 
     def test_dispatch_timeout_persists_dependency_alert_and_reservation(self):
         class TimedOutDispatchGitHub(FakeGitHub):
-            def dispatch_recovery(self, watchdog_id):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
                 self.dispatches.append(watchdog_id)
                 raise TickTimeoutError("tick exceeded its time budget")
 
@@ -992,7 +1312,9 @@ class ClassifierTest(unittest.TestCase):
 
     def test_dispatch_timeout_exits_zero_after_dependency_alert_is_sent(self):
         class TimedOutDispatchGitHub(FakeGitHub):
-            def dispatch_recovery(self, watchdog_id):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
                 self.dispatches.append(watchdog_id)
                 raise TickTimeoutError("tick exceeded its time budget")
 
@@ -1345,12 +1667,47 @@ class ControllerEndToEndTest(unittest.TestCase):
             self.assertEqual(result.exit_code, 0)
             self.assertEqual(len(notifier.calls), 1)
             self.assertEqual(notifier.calls[0][0], "ntfy:alerts")
-            self.assertIn("artifact-error", notifier.calls[0][1])
+            self.assertIn("diagnostic-unavailable", notifier.calls[0][1])
             day = store.load()["days"]["2026-09-04"]
-            self.assertTrue(day["tombstone"])
+            self.assertFalse(day["tombstone"])
             self.assertTrue(day["dispatch_attempted"])
             self.assertEqual(day["watchdog_id"], watchdog_id)
-            self.assertEqual(day["final_outcome"], "artifact-error")
+            self.assertFalse(day["terminal"])
+            self.assertIsNone(day["final_outcome"])
+            self.assertIsNotNone(day["pending_diagnostic"])
+
+    def test_pending_diagnostic_oserror_queues_unavailable_and_remains_pending(self):
+        class OSErrorGitHub(FakeGitHub):
+            def list_artifacts(self, run_id):
+                raise OSError("temporary artifact read failure")
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            record = store.ensure_day(state, "2026-09-04")
+            record["production_run_id"] = 615
+            record["production_run_attempt"] = 1
+            record["pending_diagnostic"] = pending_for(615, 1)
+            store.save(state)
+            github = OSErrorGitHub([])
+            notifier = RecordingNotifier()
+
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 19, 0, tzinfo=UTC),
+            ).tick()
+
+            persisted = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(github.workflow_calls, 0)
+            self.assertEqual(len(notifier.calls), 1)
+            self.assertEqual(notifier.calls[0][0], "ntfy:alerts")
+            self.assertIn("diagnostic-unavailable", notifier.calls[0][1])
+            self.assertNotIn("dependency-error", notifier.calls[0][1])
+            self.assertFalse(persisted["terminal"])
+            self.assertIsNone(persisted["final_outcome"])
+            self.assertIsNotNone(persisted["pending_diagnostic"])
+            self.assertIn("2026-09-04:diagnostic-unavailable", persisted["alerts_sent"])
 
     def test_terminal_alert_remains_pending_if_send_commit_crashes(self):
         class CrashStore(StateStore):
@@ -1366,7 +1723,8 @@ class ControllerEndToEndTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             store = CrashStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
-            github = FakeGitHub([run(304)], [], b"")
+            bad_artifact = dict(artifact_for(304), size_in_bytes=DiagnosticReader.max_artifact_bytes + 1)
+            github = FakeGitHub([run(304)], [bad_artifact], b"")
             controller = WatchdogController(
                 repository="acme/epg", github=github, notifier=RecordingNotifier(), store=store,
                 now=lambda: dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC),
@@ -1432,6 +1790,147 @@ class ControllerEndToEndTest(unittest.TestCase):
             self.assertTrue(final["tombstone"])
             self.assertEqual(final["final_outcome"], "expired-unresolved")
             self.assertTrue(store.load()["days"]["2026-09-18"]["tombstone"])
+
+    def test_pending_diagnostic_crossing_recovery_expiry_closes_before_github_reads(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+
+        class WallClock:
+            def __init__(self):
+                self.value = dt.datetime(2026, 9, 18, 17, 59, 59, tzinfo=UTC)
+
+            def __call__(self):
+                return self.value
+
+        class AdvancingGitHub(FakeGitHub):
+            def __init__(self, clock, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.clock = clock
+
+            def list_artifacts(self, run_id):
+                self.clock.value = dt.datetime(2026, 9, 18, 18, 0, 1, tzinfo=UTC)
+                return super().list_artifacts(run_id)
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            recovery = store.ensure_day(state, "2026-09-04")
+            recovery["dispatch_attempted"] = True
+            recovery["dispatch_requested_at"] = "2026-09-04T18:00:00Z"
+            recovery["dispatch_api_result"] = {"status": "uncertain"}
+            recovery["watchdog_id"] = "2026-09-04.0123456789abcdef0123456789abcdef"
+            diagnostic = store.ensure_day(state, "2026-09-18")
+            diagnostic["production_run_id"] = 715
+            diagnostic["production_run_attempt"] = 1
+            diagnostic["pending_diagnostic"] = pending_for(
+                715, 1, "2026-09-18T17:59:00Z", "2026-10-02T17:59:00Z"
+            )
+            store.save(state)
+            clock = WallClock()
+            github = AdvancingGitHub(clock, [], [artifact_for(715)], archive)
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=clock, monotonic=lambda: 0.0,
+            ).tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(github.workflow_calls, 0)
+            self.assertEqual(github.run_calls, [])
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "expired-unresolved")
+            self.assertIn("expired-unresolved", " ".join(message for _, message in notifier.calls))
+
+    def test_workflow_state_crossing_recovery_expiry_prevents_run_list_read(self):
+        class WallClock:
+            def __init__(self):
+                self.value = dt.datetime(2026, 9, 18, 17, 59, 59, tzinfo=UTC)
+
+            def __call__(self):
+                return self.value
+
+        class AdvancingGitHub(FakeGitHub):
+            def __init__(self, clock, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.clock = clock
+
+            def workflow_state(self):
+                result = super().workflow_state()
+                self.clock.value = dt.datetime(2026, 9, 18, 18, 0, 1, tzinfo=UTC)
+                return result
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            recovery = store.ensure_day(state, "2026-09-04")
+            recovery["dispatch_attempted"] = True
+            recovery["dispatch_requested_at"] = "2026-09-04T18:00:00Z"
+            recovery["dispatch_api_result"] = {"status": "uncertain"}
+            recovery["watchdog_id"] = "2026-09-04.0123456789abcdef0123456789abcdef"
+            due = store.ensure_day(state, "2026-09-18")
+            due["terminal"] = True
+            due["final_outcome"] = "already-complete"
+            store.save(state)
+            store.finalize_day(state, "2026-09-18")
+            clock = WallClock()
+            github = AdvancingGitHub(clock, [])
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=clock, monotonic=lambda: 0.0,
+            ).tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(github.workflow_calls, 1)
+            self.assertEqual(github.run_calls, [])
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "expired-unresolved")
+            self.assertIn("expired-unresolved", notifier.calls[0][1])
+
+    def test_workflow_list_crossing_recovery_expiry_closes_before_binding(self):
+        class WallClock:
+            def __init__(self):
+                self.value = dt.datetime(2026, 9, 18, 17, 59, 59, tzinfo=UTC)
+
+            def __call__(self):
+                return self.value
+
+        class AdvancingGitHub(FakeGitHub):
+            def __init__(self, clock, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.clock = clock
+
+            def list_runs(self, created_after):
+                result = super().list_runs(created_after)
+                self.clock.value = dt.datetime(2026, 9, 18, 18, 0, 1, tzinfo=UTC)
+                return result
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            recovery = store.ensure_day(state, "2026-09-04")
+            recovery["dispatch_attempted"] = True
+            recovery["dispatch_requested_at"] = "2026-09-04T18:00:00Z"
+            recovery["dispatch_api_result"] = {"status": "uncertain"}
+            recovery["watchdog_id"] = "2026-09-04.0123456789abcdef0123456789abcdef"
+            due = store.ensure_day(state, "2026-09-18")
+            due["terminal"] = True
+            due["final_outcome"] = "already-complete"
+            store.save(state)
+            store.finalize_day(state, "2026-09-18")
+            clock = WallClock()
+            github = AdvancingGitHub(clock, [])
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=clock, monotonic=lambda: 0.0,
+            ).tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(github.workflow_calls, 1)
+            self.assertEqual(github.run_calls, ["2026-09-04T04:17:00Z"])
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "expired-unresolved")
+            self.assertIn("expired-unresolved", notifier.calls[0][1])
 
     def test_duplicate_recovery_identity_is_terminal_and_distinct_from_schema_error(self):
         watchdog_id = "2026-09-04.0123456789abcdef0123456789abcdef"
@@ -1562,7 +2061,9 @@ class ControllerEndToEndTest(unittest.TestCase):
                 self.store = None
                 self.reservation = None
 
-            def dispatch_recovery(self, watchdog_id):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
                 day = self.store.load()["days"]["2026-09-04"]
                 self.reservation = {
                     "dispatch_attempted": day["dispatch_attempted"],
@@ -1583,36 +2084,269 @@ class ControllerEndToEndTest(unittest.TestCase):
             self.assertTrue(github.reservation["dispatch_attempted"])
             self.assertEqual(github.reservation["watchdog_id"], github.dispatches[0])
 
-    def test_dispatch_failure_never_saves_terminal_without_pending_alert(self):
+    def test_uncertain_dispatch_is_observed_on_later_tick_without_redispatch(self):
+        class AcceptedButUncertainGitHub(FakeGitHub):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
+                self.dispatches.append(watchdog_id)
+                recovery = run(
+                    319,
+                    event="workflow_dispatch",
+                    created="2026-09-04T17:30:00Z",
+                )
+                recovery["display_title"] = "EPG watchdog recovery " + watchdog_id
+                self.runs = [[recovery]]
+                raise GitHubError("simulated adapter failure after POST")
+
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            failed = run(318, conclusion="failure")
+            github = AcceptedButUncertainGitHub([[failed], [failed]], [artifact_for(319)], archive)
+            notifier = RecordingNotifier()
+            controller = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+            )
+
+            first = controller.tick()
+
+            self.assertEqual(first.exit_code, 0)
+            self.assertEqual(len(github.dispatches), 1)
+            watchdog_id = github.dispatches[0]
+            pending_or_sent = store.load()["days"]["2026-09-04"]
+            self.assertFalse(pending_or_sent["tombstone"])
+            self.assertEqual(pending_or_sent["watchdog_id"], watchdog_id)
+            self.assertEqual(pending_or_sent["dispatch_api_result"], {"status": "uncertain"})
+            self.assertFalse(pending_or_sent["terminal"])
+            self.assertIsNone(pending_or_sent["final_outcome"])
+            self.assertEqual(len(notifier.calls), 1)
+            self.assertEqual(notifier.calls[0][0], "ntfy:alerts")
+            self.assertIn("dispatch-uncertain", notifier.calls[0][1])
+            self.assertIn("may have been accepted", notifier.calls[0][1])
+
+            second = controller.tick()
+
+            self.assertEqual(second.exit_code, 0)
+            self.assertEqual(len(github.dispatches), 1)
+            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts", "ntfy:reports"])
+            self.assertIn("EPG healthy", notifier.calls[1][1])
+            final = store.load()["days"]["2026-09-04"]
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "healthy")
+
+    def test_timed_out_dispatch_command_is_observed_on_later_tick_without_redispatch(self):
+        class TimedOutRunner:
+            def run(self, args, timeout, input_data=None):
+                return type("Result", (), {
+                    "returncode": 0,
+                    "stdout": b"",
+                    "stderr": b"",
+                    "timed_out": True,
+                })()
+
+        class TimedOutDispatchGitHub(FakeGitHub):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.dispatch_adapter = GitHubAdapter("acme/epg", runner=TimedOutRunner())
+
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
+                self.dispatches.append(watchdog_id)
+                recovery = run(
+                    321,
+                    event="workflow_dispatch",
+                    created="2026-09-04T17:30:00Z",
+                )
+                recovery["display_title"] = "EPG watchdog recovery " + watchdog_id
+                self.runs = [[recovery]]
+                return self.dispatch_adapter.dispatch_recovery(watchdog_id)
+
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            failed = run(320, conclusion="failure")
+            github = TimedOutDispatchGitHub([[failed]], [artifact_for(321)], archive)
+            notifier = RecordingNotifier()
+            controller = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+            )
+
+            first = controller.tick()
+            first_record = store.load()["days"]["2026-09-04"]
+            self.assertEqual(first.exit_code, 0)
+            self.assertEqual(first_record["dispatch_api_result"], {"status": "uncertain"})
+            self.assertFalse(first_record["terminal"])
+            self.assertIn("may have been accepted", notifier.calls[0][1])
+
+            second = controller.tick()
+
+            self.assertEqual(second.exit_code, 0)
+            self.assertEqual(len(github.dispatches), 1)
+            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts", "ntfy:reports"])
+            self.assertIn("EPG healthy", notifier.calls[1][1])
+            self.assertEqual(store.load()["days"]["2026-09-04"]["final_outcome"], "healthy")
+
+    def test_malformed_dispatch_success_body_is_observed_on_later_tick_without_redispatch(self):
+        class MalformedDispatchGitHub(FakeGitHub):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.dispatch_adapter = GitHubAdapter(
+                    "acme/epg",
+                    runner=RecordingRunner(
+                        {"workflow_run_id": "not-an-id", "workflow_run_url": ""},
+                        http_status=200,
+                    ),
+                )
+
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
+                self.dispatches.append(watchdog_id)
+                recovery = run(
+                    323,
+                    event="workflow_dispatch",
+                    created="2026-09-04T17:30:00Z",
+                )
+                recovery["display_title"] = "EPG watchdog recovery " + watchdog_id
+                self.runs = [[recovery]]
+                return self.dispatch_adapter.dispatch_recovery(watchdog_id)
+
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            failed = run(322, conclusion="failure")
+            github = MalformedDispatchGitHub([[failed]], [artifact_for(323)], archive)
+            notifier = RecordingNotifier()
+            controller = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+            )
+
+            first = controller.tick()
+            first_record = store.load()["days"]["2026-09-04"]
+            self.assertEqual(first.exit_code, 0)
+            self.assertEqual(first_record["dispatch_api_result"], {"status": "uncertain"})
+            self.assertFalse(first_record["terminal"])
+            self.assertIn("dispatch-uncertain", notifier.calls[0][1])
+
+            second = controller.tick()
+
+            self.assertEqual(second.exit_code, 0)
+            self.assertEqual(len(github.dispatches), 1)
+            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts", "ntfy:reports"])
+            self.assertIn("EPG healthy", notifier.calls[1][1])
+            self.assertEqual(store.load()["days"]["2026-09-04"]["final_outcome"], "healthy")
+
+    def test_uncertain_dispatch_notification_failure_preserves_reservation_and_complete_alert(self):
         class FailingDispatchGitHub(FakeGitHub):
-            def dispatch_recovery(self, watchdog_id):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
+                self.dispatches.append(watchdog_id)
+                raise GitHubError("stderr must not be persisted")
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            failed = run(324, conclusion="failure")
+            github = FailingDispatchGitHub([[failed]], [])
+            notifier = RecordingNotifier(fail=True)
+            controller = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+            )
+
+            result = controller.tick()
+
+            self.assertEqual(result.exit_code, 1)
+            day = store.load()["days"]["2026-09-04"]
+            watchdog_id = github.dispatches[0]
+            self.assertTrue(day["dispatch_attempted"])
+            self.assertEqual(day["watchdog_id"], watchdog_id)
+            self.assertEqual(day["dispatch_api_result"], {"status": "uncertain"})
+            self.assertFalse(day["terminal"])
+            pending = day["pending_messages"]["2026-09-04:dispatch-uncertain"]
+            self.assertEqual(pending["target"], "ntfy:alerts")
+            self.assertEqual(
+                pending["body"],
+                "event=2026-09-04:dispatch-uncertain day=2026-09-04 "
+                "watchdog_id=%s request may have been accepted" % watchdog_id,
+            )
+            self.assertNotIn("stderr must not be persisted", pending["body"])
+
+    def test_uncertain_dispatch_alert_does_not_close_observation_before_expiry(self):
+        class FailingDispatchGitHub(FakeGitHub):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
                 self.dispatches.append(watchdog_id)
                 raise GitHubError("simulated dispatch failure")
 
-        class TerminalGuardStore(StateStore):
-            def save(self, state):
-                for record in state["days"].values():
-                    if (
-                        record.get("terminal")
-                        and record.get("final_outcome") == "dispatch-failed"
-                        and not record.get("pending_messages")
-                        and not record["alerts_sent"].get("2026-09-04:recovery-failed")
-                    ):
-                        raise AssertionError("terminal state saved without pending alert")
-                return super().save(state)
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            failed = run(325, conclusion="failure")
+            github = FailingDispatchGitHub([[failed]], [])
+            notifier = RecordingNotifier()
+            controller = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier,
+                store=store, now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+            )
+
+            first = controller.tick()
+            self.assertEqual(first.exit_code, 0)
+            self.assertEqual(len(github.dispatches), 1)
+            self.assertFalse(store.load()["days"]["2026-09-04"]["terminal"])
+
+            notifier.calls.clear()
+            controller.clock = lambda: dt.datetime(2026, 9, 4, 20, 1, tzinfo=UTC)
+            second = controller.tick()
+            self.assertEqual(second.exit_code, 0)
+            self.assertEqual(len(github.dispatches), 1)
+            self.assertFalse(store.load()["days"]["2026-09-04"]["terminal"])
+            self.assertIn("unbound-recovery", notifier.calls[0][1])
+
+            notifier.calls.clear()
+            state = store.load()
+            newer = store.ensure_day(state, "2026-09-18")
+            newer["terminal"] = True
+            newer["final_outcome"] = "already-complete"
+            store.save(state)
+            store.finalize_day(state, "2026-09-18")
+            controller.clock = lambda: dt.datetime(2026, 9, 18, 18, 0, tzinfo=UTC)
+            third = controller.tick()
+            self.assertEqual(third.exit_code, 0)
+            self.assertEqual(len(github.dispatches), 1)
+            self.assertIn("expired-unresolved", notifier.calls[0][1])
+            self.assertTrue(store.load()["days"]["2026-09-04"]["tombstone"])
+
+    def test_dispatch_failure_saves_nonterminal_uncertain_outcome(self):
+        class FailingDispatchGitHub(FakeGitHub):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
+                self.dispatches.append(watchdog_id)
+                raise GitHubError("simulated dispatch failure")
 
         with tempfile.TemporaryDirectory() as td:
-            store = TerminalGuardStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
-            github = FailingDispatchGitHub([run(309, conclusion="failure"), run(309, conclusion="failure")])
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            github = FailingDispatchGitHub([run(309, conclusion="failure")])
             notifier = RecordingNotifier()
             result = WatchdogController(
                 repository="acme/epg", github=github, notifier=notifier, store=store,
                 now=lambda: dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC),
             ).tick()
+
             self.assertEqual(result.exit_code, 0)
             self.assertEqual(len(notifier.calls), 1)
-            self.assertIn("recovery-failed", notifier.calls[0][1])
-            self.assertTrue(store.load()["days"]["2026-09-04"]["tombstone"])
+            self.assertIn("dispatch-uncertain", notifier.calls[0][1])
+            day = store.load()["days"]["2026-09-04"]
+            self.assertFalse(day["terminal"])
+            self.assertFalse(day["tombstone"])
+            self.assertEqual(day["final_outcome"], None)
+            self.assertEqual(day["dispatch_api_result"], {"status": "uncertain"})
 
     def test_duplicate_tick_does_no_github_work_or_notification(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1671,11 +2405,83 @@ class ControllerEndToEndTest(unittest.TestCase):
             self.assertEqual(retry.calls[0][0], "ntfy:reports")
             self.assertTrue(store.load()["days"]["2026-09-04"]["tombstone"])
 
-    def test_check_only_uses_temporary_state_and_emits_only_redacted_decision(self):
+    def test_check_only_reports_exact_read_only_evidence_for_each_decision(self):
+        cases = [
+            ("healthy", dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC), [run(101)],
+             "production-run-success", 101),
+            ("newer-success", dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC), [
+                run(102, conclusion="failure"),
+                run(103, event="push", created="2026-09-04T17:00:00Z"),
+            ], "production-run-success", 103),
+            ("delayed-without-run", dt.datetime(2026, 9, 4, 10, 0, tzinfo=UTC), [],
+             "delayed", None),
+            ("active-scheduled-run", dt.datetime(2026, 9, 4, 10, 0, tzinfo=UTC), [
+                run(104, status="in_progress", conclusion=None),
+            ], "delayed", 104),
+            ("missing", dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC), [],
+             "missing", None),
+            ("failed", dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC), [
+                run(105, conclusion="failure"),
+            ], "failed", 105),
+            ("active-main-run", dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC), [
+                run(106, event="push", status="queued", conclusion=None,
+                    created="2026-09-04T17:00:00Z"),
+            ], "active-run", None),
+            ("overdue-scheduled-run", dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC), [
+                run(107, status="queued", conclusion=None),
+            ], "scheduled-overdue", 107),
+        ]
+
+        class NoDiagnosticGitHub(FakeGitHub):
+            def list_artifacts(self, run_id):
+                raise AssertionError("check-only listed diagnostic artifacts")
+
+            def download_artifact(self, artifact_id):
+                raise AssertionError("check-only downloaded diagnostic artifacts")
+
+        for name, now, runs, expected_kind, expected_run_id in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as td:
+                state_path = pathlib.Path(td) / "state.json"
+                lock_path = pathlib.Path(td) / "watchdog.lock"
+                github = NoDiagnosticGitHub(runs)
+                notifier = RecordingNotifier()
+                output = io.StringIO()
+                with patch.object(WatchdogController, "_due_day", return_value="2026-09-04"):
+                    with contextlib.redirect_stdout(output):
+                        code = main(
+                            [
+                                "--check-only",
+                                "--repository", "acme/epg",
+                                "--state-path", str(state_path),
+                                "--lock-path", str(lock_path),
+                            ],
+                            github=github,
+                            notifier=notifier,
+                            now=lambda now=now: now,
+                        )
+                payload = json.loads(output.getvalue())
+                self.assertEqual(code, 0)
+                self.assertEqual(set(payload), {
+                    "day", "kind", "run_id", "diagnostics_checked"
+                })
+                self.assertEqual(payload, {
+                    "day": "2026-09-04",
+                    "kind": expected_kind,
+                    "run_id": expected_run_id,
+                    "diagnostics_checked": False,
+                })
+                self.assertFalse(state_path.exists())
+                self.assertFalse(lock_path.exists())
+                self.assertEqual(github.dispatches, [])
+                self.assertEqual(notifier.calls, [])
+
+    def test_check_only_error_is_nonzero_without_success_output_or_side_effects(self):
         with tempfile.TemporaryDirectory() as td:
             state_path = pathlib.Path(td) / "state.json"
             lock_path = pathlib.Path(td) / "watchdog.lock"
-            github = FakeGitHub([run(101)])
+            github = FakeGitHub([])
+            github.workflow_error = True
+            notifier = RecordingNotifier()
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 code = main(
@@ -1686,16 +2492,941 @@ class ControllerEndToEndTest(unittest.TestCase):
                         "--lock-path", str(lock_path),
                     ],
                     github=github,
-                    notifier=RecordingNotifier(),
+                    notifier=notifier,
                     now=lambda: dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC),
                 )
-            self.assertEqual(code, 0)
-            self.assertEqual(json.loads(output.getvalue()), {
-                "day": "2026-09-04", "kind": "healthy"
-            })
+            self.assertEqual(code, 1)
+            self.assertEqual(output.getvalue(), "")
             self.assertFalse(state_path.exists())
             self.assertFalse(lock_path.exists())
             self.assertEqual(github.dispatches, [])
+            self.assertEqual(notifier.calls, [])
+
+
+    def test_missing_artifact_then_valid_artifact_retries_pinned_diagnostic_after_restart(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+
+        class MissingThenValidGitHub(FakeGitHub):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.artifact_calls = []
+
+            def list_artifacts(self, run_id):
+                self.artifact_calls.append(run_id)
+                if len(self.artifact_calls) == 1:
+                    return []
+                return [artifact_for(run_id)]
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            github = MissingThenValidGitHub([run(601)], archive=archive)
+            notifier = RecordingNotifier()
+            first = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+            ).tick()
+            pending = store.load()["days"]["2026-09-04"]
+            self.assertEqual(first.exit_code, 0)
+            self.assertFalse(pending["terminal"])
+            self.assertEqual(pending["production_run_id"], 601)
+            self.assertEqual(pending["production_run_attempt"], 1)
+            self.assertEqual(pending["pending_diagnostic"]["run_id"], 601)
+            self.assertIn("diagnostic-unavailable", notifier.calls[0][1])
+            deadline = pending["pending_diagnostic"]["deadline_at"]
+
+            second = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 19, 0, tzinfo=UTC),
+            ).tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(second.exit_code, 0)
+            self.assertEqual(github.artifact_calls, [601, 601])
+            self.assertEqual(len(github.dispatches), 0)
+            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts", "ntfy:reports"])
+            self.assertEqual(final["final_outcome"], "healthy")
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(deadline, "2026-09-18T18:00:00Z")
+
+    def test_pending_diagnostic_observation_uses_time_after_workflow_reads(self):
+        class WallClock:
+            def __init__(self):
+                self.value = dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC)
+
+            def __call__(self):
+                return self.value
+
+        class AdvancingGitHub(FakeGitHub):
+            def __init__(self, clock, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.clock = clock
+
+            def list_runs(self, created_after):
+                result = super().list_runs(created_after)
+                self.clock.value = dt.datetime(2026, 9, 4, 19, 0, tzinfo=UTC)
+                return result
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            clock = WallClock()
+            github = AdvancingGitHub(clock, [run(717)])
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=RecordingNotifier(), store=store,
+                now=clock, monotonic=lambda: 0.0,
+            ).tick()
+            pending = store.load()["days"]["2026-09-04"]["pending_diagnostic"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(pending["first_observed_at"], "2026-09-04T19:00:00Z")
+            self.assertEqual(pending["deadline_at"], "2026-09-18T19:00:00Z")
+
+    def test_list_error_then_valid_artifact_keeps_pending_and_sends_one_temporary_alert(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+
+        class ListErrorThenValidGitHub(FakeGitHub):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.artifact_calls = 0
+
+            def list_artifacts(self, run_id):
+                self.artifact_calls += 1
+                if self.artifact_calls == 1:
+                    raise GitHubError("temporary list failure")
+                return [artifact_for(run_id)]
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            github = ListErrorThenValidGitHub([run(602)], archive=archive)
+            notifier = RecordingNotifier()
+            controller = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+            )
+            first = controller.tick()
+            first_record = store.load()["days"]["2026-09-04"]
+            self.assertEqual(first.exit_code, 0)
+            self.assertFalse(first_record["terminal"])
+            self.assertEqual(first_record["pending_diagnostic"]["run_id"], 602)
+            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts"])
+
+            second = controller.tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(second.exit_code, 0)
+            self.assertEqual(github.artifact_calls, 2)
+            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts", "ntfy:reports"])
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "healthy")
+
+    def test_download_timeout_then_valid_artifact_retries_without_new_dispatch(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+
+        class DownloadTimeoutThenValidGitHub(FakeGitHub):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.download_calls = 0
+
+            def download_artifact(self, artifact_id):
+                self.download_calls += 1
+                if self.download_calls == 1:
+                    raise TickTimeoutError("download timed out")
+                return super().download_artifact(artifact_id)
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            github = DownloadTimeoutThenValidGitHub([run(603)], [artifact_for(603)], archive)
+            notifier = RecordingNotifier()
+            controller = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+            )
+            first = controller.tick()
+            self.assertEqual(first.exit_code, 0)
+            self.assertFalse(store.load()["days"]["2026-09-04"]["terminal"])
+            self.assertIn("diagnostic-unavailable", notifier.calls[0][1])
+
+            second = controller.tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(second.exit_code, 0)
+            self.assertEqual(github.download_calls, 2)
+            self.assertEqual(github.dispatches, [])
+            self.assertEqual(final["final_outcome"], "healthy")
+            self.assertTrue(final["tombstone"])
+
+    def test_expired_artifact_closes_diagnostic_observation_without_retry(self):
+        artifact = artifact_for(604)
+        artifact["expired"] = True
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            github = FakeGitHub([run(604)], [artifact], b"unsafe")
+            notifier = RecordingNotifier()
+            controller = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+            )
+            first = controller.tick()
+            record = store.load()["days"]["2026-09-04"]
+            self.assertEqual(first.exit_code, 0)
+            self.assertEqual(record["final_outcome"], "diagnostic-expired")
+            self.assertTrue(record["tombstone"])
+            self.assertIn("diagnostic-expired", notifier.calls[0][1])
+            workflow_calls = github.workflow_calls
+            second = controller.tick()
+            self.assertEqual(second.exit_code, 0)
+            self.assertEqual(github.workflow_calls, workflow_calls)
+
+    def test_pending_deadline_expires_locally_before_github_is_available(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            record = store.ensure_day(state, "2026-09-04")
+            record["production_run_id"] = 605
+            record["production_run_attempt"] = 3
+            record["pending_diagnostic"] = pending_for(
+                605, 3, "2026-09-04T18:00:00Z", "2026-09-05T18:00:00Z"
+            )
+            due = store.ensure_day(state, "2026-09-05")
+            due["terminal"] = True
+            due["final_outcome"] = "already-complete"
+            store.save(state)
+            github = FakeGitHub([])
+            github.workflow_error = True
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 5, 18, 0, tzinfo=UTC),
+            ).tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(github.workflow_calls, 0)
+            self.assertEqual(github.run_calls, [])
+            self.assertEqual(final["final_outcome"], "diagnostic-expired")
+            self.assertTrue(final["tombstone"])
+            self.assertIn("diagnostic-expired", notifier.calls[0][1])
+
+    def test_notification_crossing_pending_deadline_expires_without_artifact_read(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+
+        class WallClock:
+            def __init__(self):
+                self.value = dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC)
+
+            def __call__(self):
+                return self.value
+
+        class AdvancingNotifier(RecordingNotifier):
+            def __init__(self, clock):
+                super().__init__()
+                self.clock = clock
+
+            def send(self, target, message):
+                result = super().send(target, message)
+                self.clock.value = dt.datetime(2026, 9, 4, 18, 0, 2, tzinfo=UTC)
+                return result
+
+        class TrackingGitHub(FakeGitHub):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.artifact_calls = []
+                self.download_calls = []
+
+            def list_artifacts(self, run_id):
+                self.artifact_calls.append(run_id)
+                return super().list_artifacts(run_id)
+
+            def download_artifact(self, artifact_id):
+                self.download_calls.append(artifact_id)
+                return super().download_artifact(artifact_id)
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            record = store.ensure_day(state, "2026-09-04")
+            record["production_run_id"] = 712
+            record["production_run_attempt"] = 1
+            record["pending_diagnostic"] = pending_for(
+                712, 1, "2026-09-04T18:00:00Z", "2026-09-04T18:00:01Z"
+            )
+            store.queue_message(
+                state, "2026-09-04", "2026-09-04:existing",
+                "ntfy:alerts", "existing message",
+            )
+            github = TrackingGitHub([], [artifact_for(712)], archive)
+            clock = WallClock()
+            notifier = AdvancingNotifier(clock)
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=clock, monotonic=lambda: 0.0,
+            ).tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(github.artifact_calls, [])
+            self.assertEqual(github.download_calls, [])
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "diagnostic-expired")
+
+    def test_failed_notification_retains_complete_expiry_alert_until_next_tick(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            record = store.ensure_day(state, "2026-09-04")
+            record["production_run_id"] = 606
+            record["production_run_attempt"] = 1
+            record["pending_diagnostic"] = pending_for(
+                606, 1, "2026-09-04T18:00:00Z", "2026-09-05T18:00:00Z"
+            )
+            due = store.ensure_day(state, "2026-09-05")
+            due["terminal"] = True
+            due["final_outcome"] = "already-complete"
+            later_due = store.ensure_day(state, "2026-09-06")
+            later_due["terminal"] = True
+            later_due["final_outcome"] = "already-complete"
+            store.save(state)
+            github = FakeGitHub([])
+            failing = RecordingNotifier(fail=True)
+            first = WatchdogController(
+                repository="acme/epg", github=github, notifier=failing, store=store,
+                now=lambda: dt.datetime(2026, 9, 5, 18, 0, tzinfo=UTC),
+            ).tick()
+            pending = store.load()["days"]["2026-09-04"]["pending_messages"]
+            self.assertEqual(first.exit_code, 1)
+            self.assertIn("2026-09-04:diagnostic-expired", pending)
+            body = pending["2026-09-04:diagnostic-expired"]["body"]
+
+            retry = RecordingNotifier()
+            second = WatchdogController(
+                repository="acme/epg", github=github, notifier=retry, store=store,
+                now=lambda: dt.datetime(2026, 9, 6, 18, 0, tzinfo=UTC),
+            ).tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(second.exit_code, 0)
+            self.assertEqual(retry.calls, [("ntfy:alerts", body)])
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "diagnostic-expired")
+
+    def test_two_pending_days_process_newest_first_without_erasing_older_pending_day(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+
+        class TwoPendingGitHub(FakeGitHub):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.artifact_calls = []
+                self.valid_ids = {602}
+
+            def list_artifacts(self, run_id):
+                self.artifact_calls.append(run_id)
+                if run_id in self.valid_ids:
+                    return [artifact_for(run_id)]
+                return []
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            older = store.ensure_day(state, "2026-09-03")
+            older["production_run_id"] = 601
+            older["production_run_attempt"] = 1
+            older["pending_diagnostic"] = pending_for(
+                601, 1, "2026-09-03T18:00:00Z", "2026-09-17T18:00:00Z"
+            )
+            newer = store.ensure_day(state, "2026-09-04")
+            newer["production_run_id"] = 602
+            newer["production_run_attempt"] = 1
+            newer["pending_diagnostic"] = pending_for(
+                602, 1, "2026-09-04T18:00:00Z", "2026-09-18T18:00:00Z"
+            )
+            store.save(state)
+            github = TwoPendingGitHub([])
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 19, 0, tzinfo=UTC),
+            ).tick()
+            loaded = store.load()["days"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(github.artifact_calls, [602, 601])
+            self.assertTrue(loaded["2026-09-04"]["tombstone"])
+            self.assertFalse(loaded["2026-09-03"]["terminal"])
+            self.assertIsNotNone(loaded["2026-09-03"]["pending_diagnostic"])
+            self.assertEqual(github.dispatches, [])
+
+
+    def test_final_notification_timeout_is_unsuccessful_and_keeps_message(self):
+        class TimedOutUnderlying:
+            def __init__(self):
+                self.calls = []
+
+            def run(self, args, timeout, input_data=None):
+                self.calls.append((args, timeout, input_data))
+                return type("Result", (), {
+                    "returncode": 0,
+                    "stdout": b"",
+                    "stderr": b"",
+                    "timed_out": True,
+                })()
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            store.ensure_day(state, "2026-09-04")
+            store.queue_message(state, "2026-09-04", "2026-09-04:alert", "ntfy:alerts", "complete body")
+            underlying = TimedOutUnderlying()
+            notifier = HermesNotifier(runner=underlying)
+            clock = iter((0.0, 240.0))
+            controller = WatchdogController(
+                repository="acme/epg", github=FakeGitHub([]), notifier=notifier, store=store,
+                monotonic=lambda: next(clock),
+            )
+            controller._begin_budget()
+            controller._normal_network_stopped = True
+            self.assertFalse(controller._deliver(state))
+            self.assertEqual(len(underlying.calls), 1)
+            self.assertEqual(underlying.calls[0][1], 30.0)
+            self.assertIn("2026-09-04:alert", state["days"]["2026-09-04"]["pending_messages"])
+            controller._clear_budget()
+
+
+    def test_pending_diagnostic_admission_caps_each_tick_at_two_attempts(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+
+        class TrackingGitHub(FakeGitHub):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.artifact_calls = []
+
+            def list_artifacts(self, run_id):
+                self.artifact_calls.append(run_id)
+                return [artifact_for(run_id)]
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            for day, run_id in (("2026-09-02", 701), ("2026-09-03", 702), ("2026-09-04", 703)):
+                record = store.ensure_day(state, day)
+                record["production_run_id"] = run_id
+                record["production_run_attempt"] = 1
+                record["pending_diagnostic"] = pending_for(
+                    run_id, 1, "%sT18:00:00Z" % day,
+                    "%sT18:00:00Z" % (dt.date.fromisoformat(day) + dt.timedelta(days=14))
+                )
+            store.save(state)
+            github = TrackingGitHub([], archive=archive)
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=RecordingNotifier(), store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 19, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            loaded = store.load()["days"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(github.artifact_calls, [703, 702])
+            self.assertIsNotNone(loaded["2026-09-02"]["pending_diagnostic"])
+
+    def test_pending_diagnostic_is_deferred_when_less_than_one_hundred_seconds_remain(self):
+        class FakeClock:
+            def __init__(self):
+                self.calls = 0
+
+            def __call__(self):
+                self.calls += 1
+                return 140.1 if self.calls >= 4 else 0.0
+
+        class TrackingGitHub(FakeGitHub):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.artifact_calls = []
+
+            def list_artifacts(self, run_id):
+                self.artifact_calls.append(run_id)
+                return [artifact_for(run_id)]
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            record = store.ensure_day(state, "2026-09-04")
+            record["production_run_id"] = 704
+            record["production_run_attempt"] = 1
+            record["pending_diagnostic"] = pending_for(704, 1)
+            store.save(state)
+            clock = FakeClock()
+            github = TrackingGitHub([])
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=RecordingNotifier(), store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 19, 0, tzinfo=UTC),
+                monotonic=clock,
+            ).tick()
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(github.artifact_calls, [])
+            self.assertEqual(github.workflow_calls, 0)
+            self.assertEqual(github.run_calls, [])
+            self.assertEqual(github.dispatches, [])
+            self.assertIsNotNone(store.load()["days"]["2026-09-04"]["pending_diagnostic"])
+
+    def test_recovery_missing_artifact_then_valid_attempt_two_is_observed_without_redispatch(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+
+        class RecoveryGitHub(FakeGitHub):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.artifact_calls = []
+
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
+                self.dispatches.append(watchdog_id)
+                recovery = run(
+                    705, event="workflow_dispatch", run_attempt=2,
+                    created="2026-09-04T17:30:00Z",
+                )
+                recovery["display_title"] = "EPG watchdog recovery " + watchdog_id
+                self.runs = [[recovery]]
+                return type("Dispatch", (), {
+                    "http_status": 204, "workflow_run_id": None, "workflow_run_url": None,
+                })()
+
+            def list_artifacts(self, run_id):
+                self.artifact_calls.append(run_id)
+                if len(self.artifact_calls) == 1:
+                    return []
+                return [artifact_for(run_id, 2)]
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            failed = run(706, conclusion="failure")
+            github = RecoveryGitHub([[failed], [failed]], archive=archive)
+            notifier = RecordingNotifier()
+            first = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            self.assertEqual(first.exit_code, 0)
+            self.assertEqual(len(github.dispatches), 1)
+            self.assertFalse(store.load()["days"]["2026-09-04"]["terminal"])
+
+            second = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 19, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            pending = store.load()["days"]["2026-09-04"]
+            self.assertEqual(second.exit_code, 0)
+            self.assertEqual(github.artifact_calls, [705])
+            self.assertEqual(pending["production_run_id"], 705)
+            self.assertEqual(pending["production_run_attempt"], 2)
+            self.assertIsNotNone(pending["pending_diagnostic"])
+
+            third = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 20, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(third.exit_code, 0)
+            self.assertEqual(github.artifact_calls, [705, 705])
+            self.assertEqual(len(github.dispatches), 1)
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "healthy")
+
+    def test_degraded_pending_diagnostic_sends_report_and_exact_degraded_alert(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-degraded.zip").read_bytes()
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            github = FakeGitHub([run(707)], [artifact_for(707)], archive)
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(
+                sorted(target for target, _ in notifier.calls),
+                ["ntfy:alerts", "ntfy:reports"],
+            )
+            self.assertIn("production passed", " ".join(message for _, message in notifier.calls))
+            self.assertIn("alpha=0", " ".join(message for _, message in notifier.calls))
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "degraded")
+
+    def test_artifact_expiry_shortens_pending_deadline_before_download(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+        artifact = dict(artifact_for(708), expires_at="2026-09-10T12:00:00Z")
+
+        class DeadlineCheckingGitHub(FakeGitHub):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.deadline_at_download = None
+                self.store = None
+
+            def download_artifact(self, artifact_id):
+                self.deadline_at_download = self.store.load()["days"]["2026-09-04"]["pending_diagnostic"]["deadline_at"]
+                return super().download_artifact(artifact_id)
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            github = DeadlineCheckingGitHub([run(708)], [artifact], archive)
+            github.store = store
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=RecordingNotifier(), store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(github.deadline_at_download, "2026-09-10T12:00:00Z")
+
+    def test_pending_deadline_save_failure_returns_nonzero_without_remote_alert(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+        artifact = dict(artifact_for(718), expires_at="2026-09-10T12:00:00Z")
+
+        class FailingDeadlineStore(StateStore):
+            fail_deadline_save = False
+
+            def save(self, state):
+                pending = state.get("days", {}).get("2026-09-04", {}).get("pending_diagnostic")
+                if (
+                    self.fail_deadline_save
+                    and pending is not None
+                    and pending.get("deadline_at") == "2026-09-10T12:00:00Z"
+                ):
+                    self.fail_deadline_save = False
+                    raise OSError("simulated state write failure")
+                return super().save(state)
+
+        with tempfile.TemporaryDirectory() as td:
+            store = FailingDeadlineStore(
+                pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock"
+            )
+            state = store.load()
+            record = store.ensure_day(state, "2026-09-04")
+            record["production_run_id"] = 718
+            record["production_run_attempt"] = 1
+            record["pending_diagnostic"] = pending_for(718, 1)
+            store.save(state)
+            store.fail_deadline_save = True
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg",
+                github=FakeGitHub([], [artifact], archive),
+                notifier=notifier,
+                store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            persisted = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 1)
+            self.assertEqual(notifier.calls, [])
+            self.assertEqual(
+                persisted["pending_diagnostic"]["deadline_at"],
+                "2026-09-18T18:00:00Z",
+            )
+            self.assertNotIn(
+                "2026-09-04:diagnostic-unavailable", persisted["alerts_sent"]
+            )
+
+    def test_artifact_expiry_crossed_after_list_prevents_download(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+        artifact = dict(artifact_for(713), expires_at="2026-09-04T18:00:01Z")
+
+        class WallClock:
+            def __init__(self):
+                self.value = dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC)
+
+            def __call__(self):
+                return self.value
+
+        class AdvancingGitHub(FakeGitHub):
+            def __init__(self, clock, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.clock = clock
+                self.artifact_calls = []
+                self.download_calls = []
+
+            def list_artifacts(self, run_id):
+                self.artifact_calls.append(run_id)
+                self.clock.value = dt.datetime(2026, 9, 4, 18, 0, 2, tzinfo=UTC)
+                return super().list_artifacts(run_id)
+
+            def download_artifact(self, artifact_id):
+                self.download_calls.append(artifact_id)
+                return super().download_artifact(artifact_id)
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            record = store.ensure_day(state, "2026-09-04")
+            record["production_run_id"] = 713
+            record["production_run_attempt"] = 1
+            record["pending_diagnostic"] = pending_for(713, 1)
+            store.save(state)
+            clock = WallClock()
+            github = AdvancingGitHub(clock, [], [artifact], archive)
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=RecordingNotifier(), store=store,
+                now=clock, monotonic=lambda: 0.0,
+            ).tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(github.artifact_calls, [713])
+            self.assertEqual(github.download_calls, [])
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "diagnostic-expired")
+
+    def test_artifact_expiry_crossed_during_download_expires_before_parse(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+        artifact = dict(artifact_for(716), expires_at="2026-09-04T18:00:01Z")
+
+        class WallClock:
+            def __init__(self):
+                self.value = dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC)
+
+            def __call__(self):
+                return self.value
+
+        class AdvancingGitHub(FakeGitHub):
+            def __init__(self, clock, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.clock = clock
+                self.download_calls = []
+
+            def download_artifact(self, artifact_id):
+                self.download_calls.append(artifact_id)
+                self.clock.value = dt.datetime(2026, 9, 4, 18, 0, 2, tzinfo=UTC)
+                return super().download_artifact(artifact_id)
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            record = store.ensure_day(state, "2026-09-04")
+            record["production_run_id"] = 716
+            record["production_run_attempt"] = 1
+            record["pending_diagnostic"] = pending_for(716, 1)
+            store.save(state)
+            clock = WallClock()
+            github = AdvancingGitHub(clock, [], [artifact], archive)
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=RecordingNotifier(), store=store,
+                now=clock, monotonic=lambda: 0.0,
+            ).tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(github.download_calls, [88])
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "diagnostic-expired")
+
+    def test_malformed_artifact_list_is_retryable_not_terminal(self):
+        class MalformedArtifactListGitHub(FakeGitHub):
+            def list_artifacts(self, run_id):
+                return {"artifacts": "not-a-list", "total_count": 1}
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            github = MalformedArtifactListGitHub([run(709)])
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=RecordingNotifier(), store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            record = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertFalse(record["terminal"])
+            self.assertIn("2026-09-04:diagnostic-unavailable", record["alerts_sent"])
+            self.assertIsNotNone(record["pending_diagnostic"])
+
+    def test_workflow_list_budget_is_shared_and_exhaustion_prevents_dispatch(self):
+        class AdvancingGitHub(FakeGitHub):
+            def __init__(self, clock, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.clock = clock
+
+            def workflow_state(self):
+                result = super().workflow_state()
+                self.clock.value = 239.0
+                return result
+
+            def list_runs(self, created_after):
+                self.clock.value = 241.0
+                return super().list_runs(created_after)
+
+        class Clock:
+            value = 0.0
+
+            def __call__(self):
+                return self.value
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            clock = Clock()
+            github = AdvancingGitHub(clock, [run(710, conclusion="failure"), run(710, conclusion="failure")])
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+                monotonic=clock,
+            ).tick()
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(github.workflow_calls, 1)
+            self.assertEqual(github.run_calls, ["2026-09-04T04:17:00Z"])
+            self.assertEqual(github.dispatches, [])
+            self.assertIn("dependency-error", notifier.calls[0][1])
+
+    def test_budget_expiring_before_dispatch_reservation_does_not_reserve(self):
+        class ExpiringRuns(list):
+            def __iter__(self):
+                clock.value = 240.0
+                return super().__iter__()
+
+        class Clock:
+            value = 0.0
+
+            def __call__(self):
+                return self.value
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            clock = Clock()
+            github = FakeGitHub([
+                [run(711, conclusion="failure")],
+                ExpiringRuns([run(711, conclusion="failure")]),
+            ])
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+                monotonic=clock,
+            ).tick()
+
+            record = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(github.dispatches, [])
+            self.assertFalse(record["dispatch_attempted"])
+            self.assertIsNone(record["dispatch_requested_at"])
+            self.assertIsNone(record["watchdog_id"])
+            self.assertIsNone(record["dispatch_api_result"])
+
+    def test_budget_expiring_during_reservation_does_not_block_later_dispatch(self):
+        class Clock:
+            values = [0.0]
+
+            def __call__(self):
+                if len(self.values) > 1:
+                    return self.values.pop(0)
+                return self.values[0]
+
+            def reset(self):
+                self.values = [0.0]
+
+            def expire_at_runner_boundary(self):
+                self.values = [0.0, 240.0]
+
+        class BoundaryRunner:
+            def __init__(self):
+                self.calls = []
+
+            def run(self, args, timeout, input_data=None):
+                self.calls.append((list(args), timeout, input_data))
+                return type("Result", (), {
+                    "returncode": 0,
+                    "stdout": b"",
+                    "stderr": b"",
+                })()
+
+        class RunnerBackedGitHub(FakeGitHub):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                result = self.runner.run(
+                    ["dispatch"], 30, input_data=b"{}", start_tracker=start_tracker
+                )
+                if result.returncode != 0 or getattr(result, "timed_out", False):
+                    raise GitHubError(
+                        "dispatch command failed",
+                        timed_out=getattr(result, "timed_out", False),
+                    )
+                self.dispatches.append(watchdog_id)
+                return type("Dispatch", (), {
+                    "http_status": 204,
+                    "workflow_run_id": None,
+                    "workflow_run_url": None,
+                })()
+
+        class CrossingStore(StateStore):
+            cross_once = True
+
+            def reserve_dispatch(self, state, day, requested_at, watchdog_id):
+                super().reserve_dispatch(state, day, requested_at, watchdog_id)
+                if self.cross_once:
+                    self.cross_once = False
+                    clock.expire_at_runner_boundary()
+
+        with tempfile.TemporaryDirectory() as td:
+            clock = Clock()
+            boundary_runner = BoundaryRunner()
+            store = CrossingStore(
+                pathlib.Path(td) / "state.json",
+                pathlib.Path(td) / "watchdog.lock",
+            )
+            github = RunnerBackedGitHub([
+                [run(721, conclusion="failure")],
+                [run(721, conclusion="failure")],
+            ])
+            github.runner = boundary_runner
+            notifier = RecordingNotifier()
+            controller = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+                monotonic=clock,
+            )
+
+            first = controller.tick()
+            first_record = store.load()["days"]["2026-09-04"]
+            self.assertEqual(first.exit_code, 0)
+            self.assertEqual(github.dispatches, [])
+            self.assertEqual(boundary_runner.calls, [])
+            self.assertFalse(first_record["dispatch_attempted"])
+            self.assertIsNone(first_record["dispatch_requested_at"])
+            self.assertIsNone(first_record["watchdog_id"])
+            self.assertIsNone(first_record["dispatch_api_result"])
+
+            clock.reset()
+            second = controller.tick()
+            second_record = store.load()["days"]["2026-09-04"]
+            self.assertEqual(second.exit_code, 0)
+            self.assertEqual(len(github.dispatches), 1)
+            self.assertTrue(second_record["dispatch_attempted"])
+            self.assertEqual(
+                second_record["dispatch_api_result"],
+                {"status": "accepted", "http_status": 204},
+            )
+
+    def test_tick_budget_phase_limits_sum_and_deadlines_share_tick_start(self):
+        self.assertEqual(
+            NORMAL_WORK_SECONDS + FINAL_NOTIFICATION_SECONDS
+            + PROCESS_CLEANUP_SECONDS + LOCAL_HEADROOM_SECONDS,
+            TICK_LIMIT_SECONDS,
+        )
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            controller = WatchdogController(
+                repository="acme/epg", github=FakeGitHub([]),
+                notifier=RecordingNotifier(), store=store, monotonic=lambda: 10.0,
+            )
+            controller._begin_budget()
+            self.assertEqual(controller._tick_deadline, 310.0)
+            self.assertEqual(controller._normal_deadline, 250.0)
+            self.assertEqual(controller._final_deadline, 280.0)
+            controller._clear_budget()
+
+    def test_short_tick_limit_clamps_final_notification_deadline(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(
+                pathlib.Path(td) / "state.json",
+                pathlib.Path(td) / "watchdog.lock",
+            )
+            controller = WatchdogController(
+                repository="acme/epg", github=FakeGitHub([]),
+                notifier=RecordingNotifier(), store=store, monotonic=lambda: 10.0,
+                tick_limit_seconds=5.0,
+            )
+            controller._begin_budget()
+            self.assertEqual(controller._tick_deadline, 15.0)
+            self.assertEqual(controller._normal_deadline, 15.0)
+            self.assertEqual(controller._final_deadline, 15.0)
+            controller._clear_budget()
 
 
 if __name__ == "__main__":

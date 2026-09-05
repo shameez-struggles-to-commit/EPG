@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import zipfile
+import zlib
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
@@ -42,13 +43,13 @@ class DuplicateTick(RuntimeError):
     """Another watchdog tick owns the lock."""
 
 
-STATE_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = 2
 DAY_FIELDS = frozenset({
     "scheduled_day", "scheduled_run_id", "scheduled_conclusion",
     "dispatch_attempted", "dispatch_requested_at", "dispatch_api_result",
     "watchdog_id", "recovery_run_id", "recovery_status", "production_run_id",
-    "report_run_id", "alerts_sent", "pending_messages", "terminal",
-    "final_outcome", "tombstone",
+    "production_run_attempt", "report_run_id", "alerts_sent", "pending_messages",
+    "pending_diagnostic", "terminal", "final_outcome", "tombstone",
 })
 TOMBSTONE_FIELDS = frozenset({
     "scheduled_day", "dispatch_attempted", "watchdog_id", "final_outcome",
@@ -66,8 +67,40 @@ def _valid_optional_id(value):
     )
 
 
+def _valid_dispatch_result(value):
+    if value is None:
+        return True
+    if not isinstance(value, dict):
+        return False
+    if value.get("status") == "uncertain":
+        return set(value) == {"status"}
+    if value.get("status") != "accepted":
+        return False
+    http_status = value.get("http_status")
+    if http_status == 204:
+        return set(value) == {"status", "http_status"}
+    if http_status == 200:
+        return (
+            set(value) == {"status", "http_status", "workflow_run_id"}
+            and _valid_optional_id(value.get("workflow_run_id"))
+            and value.get("workflow_run_id") is not None
+        )
+    return False
+
+
 def _valid_recovery_id(value):
     return isinstance(value, str) and RECOVERY_ID_RE.fullmatch(value) is not None
+
+
+def _parse_pending_time(value):
+    if not isinstance(value, str) or re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value
+    ) is None:
+        raise ValueError("pending timestamp has invalid format")
+    try:
+        return _dt.datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("pending timestamp is not a real UTC time") from exc
 
 
 def _validate_state(state):
@@ -119,9 +152,11 @@ def _validate_state(state):
                 "recovery_run_id", "recovery_status",
             )):
                 raise StateError("dispatch fields without attempt")
-        for field in ("scheduled_run_id", "recovery_run_id", "production_run_id", "report_run_id"):
+        for field in ("scheduled_run_id", "recovery_run_id", "production_run_id", "production_run_attempt", "report_run_id"):
             if not _valid_optional_id(record[field]):
                 raise StateError("invalid day run id")
+        if (record["production_run_id"] is None) != (record["production_run_attempt"] is None):
+            raise StateError("incomplete production identity")
         if record["scheduled_conclusion"] is not None and not isinstance(record["scheduled_conclusion"], str):
             raise StateError("invalid scheduled conclusion")
         if record["dispatch_requested_at"] is not None:
@@ -129,7 +164,7 @@ def _validate_state(state):
                 _parse_time(record["dispatch_requested_at"])
             except (TypeError, ValueError) as exc:
                 raise StateError("invalid dispatch request time") from exc
-        if record["dispatch_api_result"] is not None and not isinstance(record["dispatch_api_result"], dict):
+        if not _valid_dispatch_result(record["dispatch_api_result"]):
             raise StateError("invalid dispatch result")
         if record["watchdog_id"] is not None and not _valid_recovery_id(record["watchdog_id"]):
             raise StateError("invalid recovery identity")
@@ -139,6 +174,30 @@ def _validate_state(state):
             raise StateError("invalid final outcome")
         if record["terminal"] and not record["final_outcome"]:
             raise StateError("terminal day has no outcome")
+        pending = record["pending_diagnostic"]
+        if pending is not None:
+            if not isinstance(pending, dict) or set(pending) != {"run_id", "run_attempt", "first_observed_at", "deadline_at"}:
+                raise StateError("invalid pending diagnostic fields")
+            if (
+                not _valid_optional_id(pending["run_id"])
+                or pending["run_id"] is None
+                or not _valid_optional_id(pending["run_attempt"])
+                or pending["run_attempt"] is None
+                or record["production_run_id"] != pending["run_id"]
+                or record["production_run_attempt"] != pending["run_attempt"]
+                or record["terminal"]
+                or record["final_outcome"] is not None
+            ):
+                raise StateError("invalid pending diagnostic identity")
+            try:
+                first_observed = _parse_pending_time(pending["first_observed_at"])
+                deadline = _parse_pending_time(pending["deadline_at"])
+            except (TypeError, ValueError) as exc:
+                raise StateError("invalid pending diagnostic time") from exc
+            if not (
+                first_observed <= deadline <= first_observed + _dt.timedelta(days=14)
+            ):
+                raise StateError("invalid pending diagnostic deadline")
         if not isinstance(record["alerts_sent"], dict) or not all(
             isinstance(key, str) and value is True
             for key, value in record["alerts_sent"].items()
@@ -196,7 +255,7 @@ class StateStore:
             return state
         except StateError:
             raise
-        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError, TypeError, RecursionError, json.JSONDecodeError) as exc:
             raise StateError("corrupt state") from exc
 
     def save(self, state):
@@ -242,6 +301,19 @@ class StateStore:
         record["dispatch_api_result"] = result
         self.save(state)
 
+    def clear_unstarted_dispatch(self, state, day, watchdog_id):
+        record = self.ensure_day(state, day)
+        if (
+            not record.get("dispatch_attempted")
+            or record.get("watchdog_id") != watchdog_id
+            or record.get("dispatch_api_result") is not None
+        ):
+            raise StateError("dispatch reservation changed")
+        record["dispatch_attempted"] = False
+        record["dispatch_requested_at"] = None
+        record["watchdog_id"] = None
+        self.save(state)
+
     def queue_message(self, state, day, event_key, target, body, *, save=True):
         record = self.ensure_day(state, day)
         if record["alerts_sent"].get(event_key) is not True:
@@ -259,6 +331,8 @@ class StateStore:
 
     def finalize_day(self, state, day):
         record = self.ensure_day(state, day)
+        if record.get("pending_diagnostic") is not None:
+            return False
         if not record.get("terminal") or record.get("pending_messages"):
             return False
         compact = {
@@ -287,9 +361,11 @@ def default_day_record(day):
         "recovery_run_id": None,
         "recovery_status": None,
         "production_run_id": None,
+        "production_run_attempt": None,
         "report_run_id": None,
         "alerts_sent": {},
         "pending_messages": {},
+        "pending_diagnostic": None,
         "terminal": False,
         "final_outcome": None,
         "tombstone": False,
@@ -298,6 +374,10 @@ def default_day_record(day):
 
 class NotificationError(RuntimeError):
     """The fixed message route did not complete successfully."""
+
+    def __init__(self, message, *, timed_out=False):
+        super().__init__(message)
+        self.timed_out = timed_out
 
 
 class HermesNotifier:
@@ -316,12 +396,23 @@ class HermesNotifier:
             input_data=None,
         )
         if result.returncode != 0 or getattr(result, "timed_out", False):
-            raise NotificationError("notification command failed")
+            raise NotificationError(
+                "notification command failed",
+                timed_out=getattr(result, "timed_out", False),
+            )
         return True
 
 
 class DiagnosticError(ValueError):
     """The production diagnostic artifact is absent or unsafe."""
+
+
+class MissingDiagnosticArtifact(DiagnosticError):
+    """A complete artifact list has no exact diagnostic artifact."""
+
+
+class ExpiredDiagnosticArtifact(DiagnosticError):
+    """The exact diagnostic artifact is no longer retained."""
 
 
 @dataclass(frozen=True)
@@ -347,7 +438,7 @@ class DiagnosticReader:
         expected = "epg-diagnostics-%d" % attempt
         matches = [item for item in artifacts if isinstance(item, dict) and item.get("name") == expected]
         if not matches:
-            raise DiagnosticError("diagnostic artifact missing")
+            raise MissingDiagnosticArtifact("diagnostic artifact missing")
         if len(matches) != 1:
             raise DiagnosticError("duplicate diagnostic artifact")
         artifact = matches[0]
@@ -357,13 +448,13 @@ class DiagnosticReader:
         if not isinstance(artifact.get("expired"), bool):
             raise DiagnosticError("invalid artifact expired flag")
         if artifact["expired"]:
-            raise DiagnosticError("diagnostic artifact expired")
+            raise ExpiredDiagnosticArtifact("diagnostic artifact expired")
         expires_at = artifact.get("expires_at")
         if not isinstance(expires_at, str) or not expires_at:
             raise DiagnosticError("invalid artifact expiry")
         try:
             if _parse_time(expires_at) <= self.now:
-                raise DiagnosticError("diagnostic artifact expired")
+                raise ExpiredDiagnosticArtifact("diagnostic artifact expired")
         except DiagnosticError:
             raise
         except (TypeError, ValueError) as exc:
@@ -415,13 +506,13 @@ class DiagnosticReader:
                     raw = member_stream.read(self.max_artifact_bytes + 1)
         except DiagnosticError:
             raise
-        except (OSError, zipfile.BadZipFile, KeyError) as exc:
+        except (OSError, zipfile.BadZipFile, KeyError, RuntimeError, zlib.error) as exc:
             raise DiagnosticError("invalid diagnostic archive") from exc
         if len(raw) > self.max_artifact_bytes:
             raise DiagnosticError("status member oversized")
         try:
             payload = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        except (UnicodeDecodeError, ValueError, TypeError, RecursionError, json.JSONDecodeError) as exc:
             raise DiagnosticError("invalid status JSON") from exc
         if not isinstance(payload, dict) or not payload:
             raise DiagnosticError("invalid status object")
@@ -446,6 +537,10 @@ class DiagnosticReader:
 class GitHubError(RuntimeError):
     """A GitHub read or write could not be trusted."""
 
+    def __init__(self, message, *, timed_out=False):
+        super().__init__(message)
+        self.timed_out = timed_out
+
 
 @dataclass(frozen=True)
 class CommandResult:
@@ -463,13 +558,15 @@ class DeadlineRunner:
         self.monotonic = monotonic or time.monotonic
         self.deadline = None
 
-    def run(self, args, timeout, input_data=None):
+    def run(self, args, timeout, input_data=None, *, start_tracker=None):
         effective_timeout = timeout
         if self.deadline is not None:
             remaining = self.deadline - self.monotonic()
             if remaining <= 0:
                 return CommandResult(-1, b"", b"tick budget exhausted", timed_out=True)
             effective_timeout = min(timeout, remaining)
+        if start_tracker is not None:
+            start_tracker.started = True
         return self.runner.run(args, effective_timeout, input_data=input_data)
 
 
@@ -527,15 +624,21 @@ class GitHubAdapter:
         args = [self.executable, "api", "--method", method, endpoint]
         result = self.runner.run(args, timeout, input_data=body)
         if result.returncode != 0 or getattr(result, "timed_out", False):
-            raise GitHubError("GitHub command failed")
+            raise GitHubError(
+                "GitHub command failed",
+                timed_out=getattr(result, "timed_out", False),
+            )
         output = result.stdout
         if isinstance(output, bytes):
-            output = output.decode("utf-8")
+            try:
+                output = output.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise GitHubError("GitHub returned malformed text") from exc
         if not output.strip():
             return None
         try:
             return json.loads(output)
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        except (TypeError, ValueError, RecursionError, json.JSONDecodeError) as exc:
             raise GitHubError("GitHub returned malformed JSON") from exc
 
     def workflow_state(self):
@@ -617,12 +720,15 @@ class GitHubAdapter:
             input_data=None,
         )
         if result.returncode != 0 or getattr(result, "timed_out", False):
-            raise GitHubError("artifact download failed")
+            raise GitHubError(
+                "artifact download failed",
+                timed_out=getattr(result, "timed_out", False),
+            )
         if not isinstance(result.stdout, bytes):
             raise GitHubError("artifact download was not binary")
         return result.stdout
 
-    def dispatch_recovery(self, watchdog_id):
+    def dispatch_recovery(self, watchdog_id, *, start_tracker=None):
         endpoint = "repos/%s/actions/workflows/%s/dispatches" % (
             self.repository, self.workflow_file
         )
@@ -630,13 +736,20 @@ class GitHubAdapter:
             "ref": "main",
             "inputs": {"watchdog_id": watchdog_id},
         }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        runner_kwargs = {}
+        if isinstance(self.runner, DeadlineRunner):
+            runner_kwargs["start_tracker"] = start_tracker
         result = self.runner.run(
             [self.executable, "api", "--method", "POST", endpoint, "--input", "-"],
             30,
             input_data=body,
+            **runner_kwargs,
         )
         if result.returncode != 0 or getattr(result, "timed_out", False):
-            raise GitHubError("dispatch command failed")
+            raise GitHubError(
+                "dispatch command failed",
+                timed_out=getattr(result, "timed_out", False),
+            )
         output = result.stdout
         if isinstance(output, bytes):
             output = output.decode("utf-8")
@@ -651,7 +764,7 @@ class GitHubAdapter:
             raise GitHubError("malformed dispatch response")
         try:
             payload = json.loads(output)
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        except (TypeError, ValueError, RecursionError, json.JSONDecodeError) as exc:
             raise GitHubError("malformed dispatch response") from exc
         if not isinstance(payload, dict):
             raise GitHubError("malformed dispatch response")
@@ -809,6 +922,16 @@ class TickResult:
 
 RECOVERY_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.[0-9a-f]{32}$")
 TICK_LIMIT_SECONDS = 300
+NORMAL_WORK_SECONDS = 240
+FINAL_NOTIFICATION_SECONDS = 30
+PROCESS_CLEANUP_SECONDS = 10
+LOCAL_HEADROOM_SECONDS = 20
+PENDING_DIAGNOSTIC_ADMISSION_SECONDS = 100
+assert (
+    NORMAL_WORK_SECONDS + FINAL_NOTIFICATION_SECONDS
+    + PROCESS_CLEANUP_SECONDS + LOCAL_HEADROOM_SECONDS
+    == TICK_LIMIT_SECONDS
+)
 REPORT_TARGET = "ntfy:reports"
 ALERT_TARGET = "ntfy:alerts"
 
@@ -827,6 +950,17 @@ class TickTimeoutError(RuntimeError):
     """The complete watchdog tick exceeded its hard wall-clock budget."""
 
 
+class GitHubCallNotStarted(TickTimeoutError):
+    """A GitHub operation was rejected before its adapter was entered."""
+
+
+class OperationStartTracker:
+    """Record whether a deadline-wrapped adapter entered its real runner."""
+
+    def __init__(self):
+        self.started = False
+
+
 class WatchdogController:
     """One complete, lock-held watchdog tick."""
 
@@ -839,11 +973,30 @@ class WatchdogController:
         self.clock = now or (lambda: _dt.datetime.now(UTC))
         self.monotonic = monotonic or time.monotonic
         self.tick_limit_seconds = tick_limit_seconds
+        self._tick_start = None
         self._tick_deadline = None
+        self._normal_deadline = None
+        self._final_deadline = None
+        self._normal_network_stopped = False
+        self._final_notification_attempted = False
         self._deadline_runners = []
 
+    def _set_runner_deadline(self, deadline):
+        for runner in self._deadline_runners:
+            runner.deadline = deadline
+
     def _begin_budget(self):
-        self._tick_deadline = self.monotonic() + self.tick_limit_seconds
+        self._tick_start = self.monotonic()
+        self._tick_deadline = self._tick_start + self.tick_limit_seconds
+        normal_seconds = min(NORMAL_WORK_SECONDS, self.tick_limit_seconds)
+        self._normal_deadline = self._tick_start + normal_seconds
+        self._final_deadline = min(
+            self._normal_deadline + FINAL_NOTIFICATION_SECONDS,
+            self._tick_deadline,
+        )
+        self._normal_network_stopped = False
+        self._final_notification_attempted = False
+        self._diagnostic_attempts = 0
         self._deadline_runners = []
         for owner in (self.github, self.notifier):
             runner = getattr(owner, "runner", None)
@@ -852,22 +1005,53 @@ class WatchdogController:
             if not isinstance(runner, DeadlineRunner):
                 runner = DeadlineRunner(runner, monotonic=self.monotonic)
                 owner.runner = runner
-            runner.deadline = self._tick_deadline
+            runner.deadline = self._normal_deadline
             self._deadline_runners.append(runner)
 
     def _clear_budget(self):
         for runner in self._deadline_runners:
             runner.deadline = None
         self._deadline_runners = []
+        self._tick_start = None
         self._tick_deadline = None
+        self._normal_deadline = None
+        self._final_deadline = None
+        self._normal_network_stopped = False
+        self._final_notification_attempted = False
+        self._diagnostic_attempts = 0
 
     def _check_budget(self):
-        if self._tick_deadline is not None and self.monotonic() > self._tick_deadline:
-            raise TickTimeoutError("watchdog tick exceeded 300 seconds")
+        if self._normal_deadline is not None and self.monotonic() >= self._normal_deadline:
+            self._normal_network_stopped = True
+            raise TickTimeoutError("watchdog normal-work budget exhausted")
 
-    def _github_call(self, operation, *args):
-        self._check_budget()
-        result = operation(*args)
+    def _admit_pending_diagnostic(self):
+        if self._normal_network_stopped or self._diagnostic_attempts >= 2:
+            return False
+        if self._normal_deadline is None:
+            self._diagnostic_attempts += 1
+            return True
+        if self._normal_deadline - self.monotonic() < PENDING_DIAGNOSTIC_ADMISSION_SECONDS:
+            return False
+        self._diagnostic_attempts += 1
+        return True
+
+    def _github_call(self, operation, *args, **kwargs):
+        try:
+            self._check_budget()
+        except TickTimeoutError as exc:
+            raise GitHubCallNotStarted(str(exc)) from exc
+        try:
+            result = operation(*args, **kwargs)
+        except TickTimeoutError:
+            self._normal_network_stopped = True
+            raise
+        except GitHubError as exc:
+            if getattr(exc, "timed_out", False):
+                self._normal_network_stopped = True
+            raise
+        except OSError as exc:
+            raise GitHubError("GitHub operation failed") from exc
         self._check_budget()
         return result
 
@@ -881,17 +1065,55 @@ class WatchdogController:
             return now.date().isoformat()
         return (now.date() - _dt.timedelta(days=1)).isoformat()
 
-    def _pending(self, state):
-        for day in sorted(state["days"], reverse=True):
-            record = state["days"][day]
-            for key in sorted(record.get("pending_messages", {})):
-                message = record["pending_messages"][key]
-                try:
-                    self.notifier.send(message["target"], message["body"])
-                except NotificationError:
-                    return False
-                self.store.mark_message_sent(state, day, key)
-        return True
+    def _eligible_work(self, state, now):
+        due_day = self._due_day(now)
+        older_days = sorted(
+            day for day, record in state["days"].items()
+            if day < due_day
+            and not record.get("tombstone")
+            and not record.get("terminal")
+            and record.get("pending_diagnostic") is None
+        )
+        due_record = state["days"].get(due_day)
+        needs_due = due_record is None or not (
+            due_record.get("tombstone")
+            or due_record.get("terminal")
+            or due_record.get("pending_diagnostic") is not None
+        )
+        work_days = older_days + ([due_day] if needs_due else [])
+        return due_day, older_days, needs_due, work_days
+
+    def _pending(self, state, *, final=False):
+        previous_deadlines = [runner.deadline for runner in self._deadline_runners]
+        if final:
+            if self._final_notification_attempted:
+                return True
+            self._final_notification_attempted = True
+            self._set_runner_deadline(self._final_deadline)
+        try:
+            for day in sorted(state["days"], reverse=True):
+                record = state["days"][day]
+                for key in sorted(record.get("pending_messages", {})):
+                    if not final:
+                        self._check_budget()
+                    message = record["pending_messages"][key]
+                    try:
+                        self.notifier.send(message["target"], message["body"])
+                    except NotificationError as exc:
+                        if getattr(exc, "timed_out", False):
+                            self._normal_network_stopped = True
+                            if final:
+                                return False
+                            return self._pending(state, final=True)
+                        return False
+                    self.store.mark_message_sent(state, day, key)
+                    if final:
+                        return True
+            return True
+        finally:
+            if final:
+                for runner, deadline in zip(self._deadline_runners, previous_deadlines):
+                    runner.deadline = deadline
 
     def _queue(self, state, day, event_type, target, body, *, save=True):
         key = "%s:%s" % (day, event_type)
@@ -899,6 +1121,15 @@ class WatchdogController:
         return key
 
     def _deliver(self, state):
+        if (
+            self._normal_network_stopped
+            or (
+                self._normal_deadline is not None
+                and self.monotonic() >= self._normal_deadline
+            )
+        ):
+            self._normal_network_stopped = True
+            return self._pending(state, final=True)
         return self._pending(state)
 
     def _run_url(self, run):
@@ -906,26 +1137,71 @@ class WatchdogController:
             "https://github.com/%s/actions/runs/%s" % (self.repository, run["id"])
         )
 
-    def _production(self, state, day, record, run, now):
-        record["production_run_id"] = run["id"]
-        record["report_run_id"] = run["id"]
+    def _queue_diagnostic_unavailable(self, state, day, record):
+        self._queue(
+            state, day, "diagnostic-unavailable", ALERT_TARGET,
+            "event=%s:diagnostic-unavailable day=%s run=%s" % (
+                day, day, record["production_run_id"]
+            ),
+            save=False,
+        )
         self.store.save(state)
+
+    def _finish_diagnostic(self, state, day, record, outcome):
+        record["pending_diagnostic"] = None
+        record["terminal"] = True
+        record["final_outcome"] = outcome
+        self._queue(
+            state, day, outcome, ALERT_TARGET,
+            "event=%s:%s day=%s run=%s" % (
+                day, outcome, day, record["production_run_id"]
+            ),
+            save=False,
+        )
+        self.store.save(state)
+
+    def _read_pending_diagnostic(self, state, day, record, run, now):
+        now = self._now()
+        pending = record["pending_diagnostic"]
+        if now >= _parse_pending_time(pending["deadline_at"]):
+            self._finish_diagnostic(state, day, record, "diagnostic-expired")
+            return
         try:
             artifacts = self._github_call(self.github.list_artifacts, run["id"])
+            if not isinstance(artifacts, list) or any(
+                not isinstance(item, dict) for item in artifacts
+            ):
+                raise GitHubError("invalid artifact list")
+            now = self._now()
+            if now >= _parse_pending_time(pending["deadline_at"]):
+                self._finish_diagnostic(state, day, record, "diagnostic-expired")
+                return
             reader = DiagnosticReader(now=now)
             artifact = reader.validate_artifact(run, artifacts)
+            expires_at = _parse_time(artifact["expires_at"])
+            pending_deadline = _parse_pending_time(pending["deadline_at"])
+            if expires_at < pending_deadline:
+                record["pending_diagnostic"]["deadline_at"] = _iso(expires_at)
+                self.store.save(state)
+            if self._now() >= _parse_pending_time(pending["deadline_at"]):
+                self._finish_diagnostic(state, day, record, "diagnostic-expired")
+                return
             archive = self._github_call(self.github.download_artifact, artifact["id"])
-            diagnostic = reader.read(run, [artifact], archive)
-        except (StopIteration, GitHubError, DiagnosticError, TickTimeoutError, KeyError, TypeError, ValueError):
-            record["terminal"] = True
-            record["final_outcome"] = "artifact-error"
-            self._queue(
-                state, day, "artifact-error", ALERT_TARGET,
-                "event=%s:artifact-error day=%s run=%s" % (day, day, run["id"]),
-                save=False,
-            )
-            self.store.save(state)
+            now = self._now()
+            if now >= _parse_pending_time(pending["deadline_at"]):
+                self._finish_diagnostic(state, day, record, "diagnostic-expired")
+                return
+            diagnostic = DiagnosticReader(now=now).read(run, [artifact], archive)
+        except (MissingDiagnosticArtifact, GitHubError, TickTimeoutError):
+            self._queue_diagnostic_unavailable(state, day, record)
             return
+        except ExpiredDiagnosticArtifact:
+            self._finish_diagnostic(state, day, record, "diagnostic-expired")
+            return
+        except (DiagnosticError, KeyError, TypeError, ValueError):
+            self._finish_diagnostic(state, day, record, "artifact-error")
+            return
+        record["pending_diagnostic"] = None
         record["terminal"] = True
         record["final_outcome"] = "healthy" if diagnostic.healthy else "degraded"
         url = self._run_url(run)
@@ -956,7 +1232,90 @@ class WatchdogController:
             )
         self.store.save(state)
 
+    def _production(self, state, day, record, run, now):
+        run_attempt = run.get("run_attempt")
+        if not _valid_optional_id(run.get("id")) or not _valid_optional_id(run_attempt):
+            raise StateError("invalid production identity")
+        pending = record.get("pending_diagnostic")
+        if pending is None:
+            record["production_run_id"] = run["id"]
+            record["production_run_attempt"] = run_attempt
+            record["report_run_id"] = run["id"]
+            first_observed = _iso(self._now())
+            record["pending_diagnostic"] = {
+                "run_id": run["id"],
+                "run_attempt": run_attempt,
+                "first_observed_at": first_observed,
+                "deadline_at": _iso(
+                    _parse_pending_time(first_observed) + _dt.timedelta(days=14)
+                ),
+            }
+            self.store.save(state)
+        elif (
+            pending["run_id"] != run["id"]
+            or pending["run_attempt"] != run_attempt
+        ):
+            raise StateError("production run changed while diagnostic pending")
+        if not self._admit_pending_diagnostic():
+            return
+        self._read_pending_diagnostic(state, day, record, run, now)
+
+    def _process_pending_diagnostic(self, state, day, record, now):
+        production_id = record.get("production_run_id")
+        production_attempt = record.get("production_run_attempt")
+        run = {
+            "id": production_id,
+            "run_attempt": production_attempt,
+            "head_branch": "main",
+        }
+        self._read_pending_diagnostic(state, day, record, run, now)
+
+    def _expire_pending_diagnostics(self, state, now):
+        for day in sorted(state["days"], reverse=True):
+            record = state["days"][day]
+            pending = record.get("pending_diagnostic")
+            if pending is None:
+                continue
+            if now >= _parse_pending_time(pending["deadline_at"]):
+                self._finish_diagnostic(state, day, record, "diagnostic-expired")
+
+    def _expire_recoveries(self, state, now):
+        recovery_days = [
+            day for day, record in state["days"].items()
+            if not record.get("tombstone")
+            and record.get("dispatch_attempted")
+            and not record.get("terminal")
+            and record.get("pending_diagnostic") is None
+        ]
+        for day in sorted(recovery_days, reverse=True):
+            record = state["days"][day]
+            requested = record.get("dispatch_requested_at")
+            try:
+                recovery_age = now - _parse_time(requested)
+            except (TypeError, ValueError):
+                recovery_age = _dt.timedelta(days=999)
+            if recovery_age >= _dt.timedelta(days=14):
+                self._process_recovery(state, day, record, [], now)
+
+    def _pending_diagnostic_days(self, state):
+        return [
+            day for day, record in state["days"].items()
+            if not record.get("tombstone") and record.get("pending_diagnostic") is not None
+        ]
+
+    def _process_pending_diagnostics(self, state, now):
+        admitted = 0
+        for day in sorted(self._pending_diagnostic_days(state), reverse=True):
+            if self._normal_network_stopped or not self._admit_pending_diagnostic():
+                break
+            self._process_pending_diagnostic(state, day, state["days"][day], now)
+            admitted += 1
+            if self._normal_network_stopped:
+                break
+        return admitted
+
     def _process_recovery(self, state, day, record, runs, now):
+        now = self._now()
         requested = record.get("dispatch_requested_at")
         if not requested or not record.get("watchdog_id"):
             return
@@ -1073,29 +1432,55 @@ class WatchdogController:
                 watchdog_id = "%s.%s" % (day, secrets.token_hex(16))
                 if not RECOVERY_ID_RE.fullmatch(watchdog_id):
                     raise StateError("invalid recovery identity")
+                self._check_budget()
                 self.store.reserve_dispatch(
                     state, day, _iso(now), watchdog_id
                 )
+                start_tracker = OperationStartTracker()
                 try:
-                    dispatch = self._github_call(self.github.dispatch_recovery, watchdog_id)
-                    self.store.record_dispatch(state, day, {
+                    dispatch = self._github_call(
+                        self.github.dispatch_recovery,
+                        watchdog_id,
+                        start_tracker=start_tracker,
+                    )
+                    dispatch_result = {
+                        "status": "accepted",
                         "http_status": dispatch.http_status,
-                        "workflow_run_id": dispatch.workflow_run_id,
-                        "workflow_run_url": dispatch.workflow_run_url,
-                    })
+                    }
+                    if dispatch.http_status == 200:
+                        dispatch_result["workflow_run_id"] = dispatch.workflow_run_id
+                    self.store.record_dispatch(state, day, dispatch_result)
                     self._queue(
                         state, day, "recovery-start", ALERT_TARGET,
                         "event=%s:recovery-start day=%s watchdog_id=%s" % (
                             day, day, watchdog_id
                         ),
                     )
-                except (GitHubError, OSError, ValueError):
-                    self.store.record_dispatch(state, day, {"error": "dispatch-failed"})
-                    record["terminal"] = True
-                    record["final_outcome"] = "dispatch-failed"
+                except GitHubCallNotStarted:
+                    self.store.clear_unstarted_dispatch(state, day, watchdog_id)
+                    raise
+                except GitHubError:
+                    if not start_tracker.started:
+                        self.store.clear_unstarted_dispatch(state, day, watchdog_id)
+                        raise GitHubCallNotStarted(
+                            "GitHub operation did not enter its runner"
+                        )
+                    self.store.record_dispatch(state, day, {"status": "uncertain"})
                     self._queue(
-                        state, day, "recovery-failed", ALERT_TARGET,
-                        "event=%s:recovery-failed day=%s" % (day, day),
+                        state, day, "dispatch-uncertain", ALERT_TARGET,
+                        "event=%s:dispatch-uncertain day=%s watchdog_id=%s request may have been accepted" % (
+                            day, day, watchdog_id
+                        ),
+                        save=False,
+                    )
+                    self.store.save(state)
+                except (OSError, ValueError):
+                    self.store.record_dispatch(state, day, {"status": "uncertain"})
+                    self._queue(
+                        state, day, "dispatch-uncertain", ALERT_TARGET,
+                        "event=%s:dispatch-uncertain day=%s watchdog_id=%s request may have been accepted" % (
+                            day, day, watchdog_id
+                        ),
                         save=False,
                     )
                     self.store.save(state)
@@ -1115,12 +1500,18 @@ class WatchdogController:
             day = self._due_day(now)
             if day is None:
                 decision = Decision("delayed")
-                redacted = json.dumps({"day": now.date().isoformat(), "kind": decision.kind}, sort_keys=True)
-                return TickResult(0, decision=decision, stdout=redacted)
-            self._github_call(self.github.workflow_state)
-            runs = self._github_call(self.github.list_runs, _iso(slot_for_day(day)))
-            decision = classify_day(now=now, slot=slot_for_day(day), runs=runs)
-            redacted = json.dumps({"day": day, "kind": decision.kind}, sort_keys=True)
+            else:
+                self._github_call(self.github.workflow_state)
+                runs = self._github_call(self.github.list_runs, _iso(slot_for_day(day)))
+                decision = classify_day(now=now, slot=slot_for_day(day), runs=runs)
+            successful = decision.kind in {"healthy", "newer-success"}
+            selected_run = decision.production_run if successful else decision.scheduled_run
+            redacted = json.dumps({
+                "day": day or now.date().isoformat(),
+                "kind": "production-run-success" if successful else decision.kind,
+                "run_id": selected_run["id"] if selected_run else None,
+                "diagnostics_checked": False,
+            }, sort_keys=True)
             return TickResult(0, decision=decision, stdout=redacted)
         except (GitHubError, WatchdogSchemaError, TickTimeoutError, OSError, ValueError):
             return TickResult(1)
@@ -1147,37 +1538,32 @@ class WatchdogController:
                     return TickResult(1)
                 return TickResult(0)
             active_day = None
+
+            # These are local transitions and must happen before any external call.
+            self._expire_pending_diagnostics(state, now)
+            self._expire_recoveries(state, now)
+
             if not self._deliver(state):
                 return TickResult(1)
-            due_day = self._due_day(now)
-            recovery_days = [
-                day for day, record in state["days"].items()
-                if not record.get("tombstone") and record.get("dispatch_attempted")
-                and not record.get("terminal")
-            ]
-            # Expiry is a local state transition. Resolve it before any GitHub
-            # read so an old recovery cannot query after artifact retention ends.
-            for day in sorted(recovery_days, reverse=True):
-                record = state["days"][day]
-                requested = record.get("dispatch_requested_at")
-                try:
-                    recovery_age = now - _parse_time(requested)
-                except (TypeError, ValueError):
-                    recovery_age = _dt.timedelta(days=999)
-                if recovery_age >= _dt.timedelta(days=14):
-                    self._process_recovery(state, day, record, [], now)
+            if self._normal_network_stopped:
+                return TickResult(0)
 
-            older_days = sorted(
-                day for day, record in state["days"].items()
-                if day < due_day
-                and not record.get("tombstone")
-                and not record.get("terminal")
-            )
-            due_record = state["days"].get(due_day)
-            needs_due = due_record is None or not (
-                due_record.get("tombstone") or due_record.get("terminal")
-            )
-            work_days = older_days + ([due_day] if needs_due else [])
+            self._process_pending_diagnostics(state, now)
+            if not self._deliver(state):
+                return TickResult(1)
+            if self._normal_network_stopped:
+                return TickResult(0)
+
+            now = self._now()
+            self._expire_pending_diagnostics(state, now)
+            self._expire_recoveries(state, now)
+            if not self._deliver(state):
+                return TickResult(1)
+            if self._normal_network_stopped:
+                return TickResult(0)
+            now = self._now()
+
+            due_day, older_days, needs_due, work_days = self._eligible_work(state, now)
             if not work_days:
                 if not self._deliver(state):
                     return TickResult(1)
@@ -1188,8 +1574,29 @@ class WatchdogController:
 
             oldest = min(work_days)
             self._github_call(self.github.workflow_state)
+            now = self._now()
+            self._expire_pending_diagnostics(state, now)
+            self._expire_recoveries(state, now)
+            if not self._deliver(state):
+                return TickResult(1)
+            if self._normal_network_stopped:
+                return TickResult(0)
+            now = self._now()
+            self._expire_pending_diagnostics(state, now)
+            self._expire_recoveries(state, now)
+            due_day, older_days, needs_due, work_days = self._eligible_work(state, now)
+            if not work_days:
+                if not self._deliver(state):
+                    return TickResult(1)
+                for day, item in list(state["days"].items()):
+                    if item.get("terminal"):
+                        self.store.finalize_day(state, day)
+                return TickResult(0)
+            oldest = min(work_days)
             runs = self._github_call(self.github.list_runs, _iso(slot_for_day(oldest)))
             for day in sorted(older_days, reverse=True):
+                if self._normal_network_stopped:
+                    break
                 active_day = day
                 record = state["days"][day]
                 if record.get("dispatch_attempted"):
@@ -1198,7 +1605,7 @@ class WatchdogController:
                     self._process_slot(state, day, record, runs, now, oldest)
 
             decision = None
-            if needs_due:
+            if needs_due and not self._normal_network_stopped:
                 active_day = due_day
                 record = state["days"].get(due_day)
                 if record and record.get("dispatch_attempted") and not record.get("terminal"):
@@ -1214,7 +1621,9 @@ class WatchdogController:
                 if item.get("terminal"):
                     self.store.finalize_day(state, day)
             return TickResult(0, decision=decision)
-        except (TickTimeoutError, GitHubError, WatchdogSchemaError, DiagnosticError, StateError, OSError, ValueError) as exc:
+        except OSError:
+            return TickResult(1)
+        except (TickTimeoutError, GitHubError, WatchdogSchemaError, DiagnosticError, StateError, ValueError) as exc:
             try:
                 state = locals().get("state")
                 if state is None:
