@@ -1441,12 +1441,18 @@ class WatchdogController:
             day = self._due_day(now)
             if day is None:
                 decision = Decision("delayed")
-                redacted = json.dumps({"day": now.date().isoformat(), "kind": decision.kind}, sort_keys=True)
-                return TickResult(0, decision=decision, stdout=redacted)
-            self._github_call(self.github.workflow_state)
-            runs = self._github_call(self.github.list_runs, _iso(slot_for_day(day)))
-            decision = classify_day(now=now, slot=slot_for_day(day), runs=runs)
-            redacted = json.dumps({"day": day, "kind": decision.kind}, sort_keys=True)
+            else:
+                self._github_call(self.github.workflow_state)
+                runs = self._github_call(self.github.list_runs, _iso(slot_for_day(day)))
+                decision = classify_day(now=now, slot=slot_for_day(day), runs=runs)
+            successful = decision.kind in {"healthy", "newer-success"}
+            selected_run = decision.production_run if successful else decision.scheduled_run
+            redacted = json.dumps({
+                "day": day or now.date().isoformat(),
+                "kind": "production-run-success" if successful else decision.kind,
+                "run_id": selected_run["id"] if selected_run else None,
+                "diagnostics_checked": False,
+            }, sort_keys=True)
             return TickResult(0, decision=decision, stdout=redacted)
         except (GitHubError, WatchdogSchemaError, TickTimeoutError, OSError, ValueError):
             return TickResult(1)

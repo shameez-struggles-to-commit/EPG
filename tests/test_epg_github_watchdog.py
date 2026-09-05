@@ -2333,11 +2333,83 @@ class ControllerEndToEndTest(unittest.TestCase):
             self.assertEqual(retry.calls[0][0], "ntfy:reports")
             self.assertTrue(store.load()["days"]["2026-09-04"]["tombstone"])
 
-    def test_check_only_uses_temporary_state_and_emits_only_redacted_decision(self):
+    def test_check_only_reports_exact_read_only_evidence_for_each_decision(self):
+        cases = [
+            ("healthy", dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC), [run(101)],
+             "production-run-success", 101),
+            ("newer-success", dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC), [
+                run(102, conclusion="failure"),
+                run(103, event="push", created="2026-09-04T17:00:00Z"),
+            ], "production-run-success", 103),
+            ("delayed-without-run", dt.datetime(2026, 9, 4, 10, 0, tzinfo=UTC), [],
+             "delayed", None),
+            ("active-scheduled-run", dt.datetime(2026, 9, 4, 10, 0, tzinfo=UTC), [
+                run(104, status="in_progress", conclusion=None),
+            ], "delayed", 104),
+            ("missing", dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC), [],
+             "missing", None),
+            ("failed", dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC), [
+                run(105, conclusion="failure"),
+            ], "failed", 105),
+            ("active-main-run", dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC), [
+                run(106, event="push", status="queued", conclusion=None,
+                    created="2026-09-04T17:00:00Z"),
+            ], "active-run", None),
+            ("overdue-scheduled-run", dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC), [
+                run(107, status="queued", conclusion=None),
+            ], "scheduled-overdue", 107),
+        ]
+
+        class NoDiagnosticGitHub(FakeGitHub):
+            def list_artifacts(self, run_id):
+                raise AssertionError("check-only listed diagnostic artifacts")
+
+            def download_artifact(self, artifact_id):
+                raise AssertionError("check-only downloaded diagnostic artifacts")
+
+        for name, now, runs, expected_kind, expected_run_id in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as td:
+                state_path = pathlib.Path(td) / "state.json"
+                lock_path = pathlib.Path(td) / "watchdog.lock"
+                github = NoDiagnosticGitHub(runs)
+                notifier = RecordingNotifier()
+                output = io.StringIO()
+                with patch.object(WatchdogController, "_due_day", return_value="2026-09-04"):
+                    with contextlib.redirect_stdout(output):
+                        code = main(
+                            [
+                                "--check-only",
+                                "--repository", "acme/epg",
+                                "--state-path", str(state_path),
+                                "--lock-path", str(lock_path),
+                            ],
+                            github=github,
+                            notifier=notifier,
+                            now=lambda now=now: now,
+                        )
+                payload = json.loads(output.getvalue())
+                self.assertEqual(code, 0)
+                self.assertEqual(set(payload), {
+                    "day", "kind", "run_id", "diagnostics_checked"
+                })
+                self.assertEqual(payload, {
+                    "day": "2026-09-04",
+                    "kind": expected_kind,
+                    "run_id": expected_run_id,
+                    "diagnostics_checked": False,
+                })
+                self.assertFalse(state_path.exists())
+                self.assertFalse(lock_path.exists())
+                self.assertEqual(github.dispatches, [])
+                self.assertEqual(notifier.calls, [])
+
+    def test_check_only_error_is_nonzero_without_success_output_or_side_effects(self):
         with tempfile.TemporaryDirectory() as td:
             state_path = pathlib.Path(td) / "state.json"
             lock_path = pathlib.Path(td) / "watchdog.lock"
-            github = FakeGitHub([run(101)])
+            github = FakeGitHub([])
+            github.workflow_error = True
+            notifier = RecordingNotifier()
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 code = main(
@@ -2348,16 +2420,15 @@ class ControllerEndToEndTest(unittest.TestCase):
                         "--lock-path", str(lock_path),
                     ],
                     github=github,
-                    notifier=RecordingNotifier(),
+                    notifier=notifier,
                     now=lambda: dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC),
                 )
-            self.assertEqual(code, 0)
-            self.assertEqual(json.loads(output.getvalue()), {
-                "day": "2026-09-04", "kind": "healthy"
-            })
+            self.assertEqual(code, 1)
+            self.assertEqual(output.getvalue(), "")
             self.assertFalse(state_path.exists())
             self.assertFalse(lock_path.exists())
             self.assertEqual(github.dispatches, [])
+            self.assertEqual(notifier.calls, [])
 
 
     def test_missing_artifact_then_valid_artifact_retries_pinned_diagnostic_after_restart(self):
