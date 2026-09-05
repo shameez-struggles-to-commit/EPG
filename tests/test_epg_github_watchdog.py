@@ -687,8 +687,9 @@ class ClassifierTest(unittest.TestCase):
             pid_path = pathlib.Path(td) / "child.pid"
             child_code = "import time; time.sleep(30)"
             parent_code = (
-                "import pathlib, subprocess, sys, time; "
+                "import pathlib, signal, subprocess, sys, time; "
                 "child=subprocess.Popen([sys.executable, '-c', sys.argv[2]]); "
+                "signal.signal(signal.SIGTERM, lambda *_: (child.wait(timeout=2), sys.exit(0))); "
                 "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); time.sleep(30)"
             )
             result = SubprocessAdapter().run(
