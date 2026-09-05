@@ -7,12 +7,21 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      watchdog_id:
+        description: Watchdog recovery ID (UTC day plus random nonce)
+        required: false
+        default: ''
+        type: string
 
-# AUDIT-4 F-02/F-12: one build at a time; a queued (older) run is cancelled so
-# a slow stale build can never publish over a newer one.
+run-name: >-
+  ${{ inputs.watchdog_id != ''
+      && format('EPG watchdog recovery {0}', inputs.watchdog_id)
+      || format('Build EPG Guide ({0})', github.event_name) }}
+
 concurrency:
   group: epg-build
-  cancel-in-progress: true
+  queue: max
 
 env:
   # Reviewed upstream revision. Update only through a tested dependency PR.
@@ -71,17 +80,13 @@ jobs:
           PYEOF
 
       - name: Run PK scrapers (Pakistan)
-        run: python3 scrapers/pk_scrapers.py ./data/pk_epg.json || echo "PK scraper(s) failed — see alert step"
+        run: python3 scrapers/pk_scrapers.py ./data/pk_epg.json || echo "PK scraper(s) failed — see status log"
 
-      - name: Alert on PK scraper failure (no-LLM)
-        env:
-          NTFY_URL: ${{ secrets.NTFY_URL }}
-          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      - name: Record PK scraper status (no-LLM)
         continue-on-error: true
         run: |
           python3 - <<'PYEOF'
-          import json, os, subprocess
+          import json
           try:
               status = json.load(open('data/pk_status.json'))
           except Exception:
@@ -89,14 +94,6 @@ jobs:
           failed = [k for k, s in status.items() if not s.get('ok')]
           if failed:
               msg = "⚠️ EPG PK scraper(s) failed: " + ", ".join(f"{k}={status[k]['count']}" for k in failed)
-              ntfy = os.environ.get('NTFY_URL',''); tok = os.environ.get('NTFY_TOKEN','')
-              topic = os.environ.get('NTFY_TOPIC','')
-              if ntfy and tok and topic:
-                  try:
-                      hn = 'Authori' + 'zation'; scheme = 'Bear' + 'er'
-                      subprocess.run(['curl','-s','--max-time','10','-H',f'{hn}: {scheme} {tok}','-d',msg,f'{ntfy}/{topic}'], timeout=15)
-                  except Exception as e:
-                      print(f'ntfy send failed (non-fatal): {e}')
               print(msg)
           else:
               print('all PK scrapers OK')
@@ -331,11 +328,7 @@ jobs:
             --previous /tmp/previous-guide.xml.gz \
             --json-out data/guide_health.json
 
-      - name: Generate coverage report + drop alert
-        env:
-          NTFY_URL: ${{ secrets.NTFY_URL }}
-          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      - name: Generate coverage report + drop log
         run: |
           python3 - <<'PYEOF'
           import gzip, json, re, os, subprocess, io
@@ -371,17 +364,6 @@ jobs:
               prev_chans = 0
           drop = bool(prev_chans) and new_chans < prev_chans * 0.90
           print(f'deployed channels: {prev_chans}, new: {new_chans}, drop={drop}')
-
-          if drop:
-              ntfy = os.environ.get('NTFY_URL','')
-              tok = os.environ.get('NTFY_TOKEN','')
-              topic = os.environ.get('NTFY_TOPIC','')
-              if ntfy and tok and topic:
-                  hn = 'Authori' + 'zation'; scheme = 'Bear' + 'er'
-                  subprocess.run(['curl','-s','-H',f'{hn}: {scheme} {tok}',
-                                  '-d', f'⚠️ EPG coverage dropped: {new_chans} channels vs {prev_chans} deployed. Check the pipeline.',
-                                  f'{ntfy}/{topic}'], timeout=30)
-                  print('coverage-drop ntfy sent')
           PYEOF
 
       - name: Coverage gap audit (deterministic, deployed with the guide)
@@ -423,7 +405,10 @@ jobs:
 
   deploy:
     needs: build
+    timeout-minutes: 15
     permissions:
+      actions: read
+      contents: read
       pages: write
       id-token: write
     runs-on: ubuntu-latest
@@ -431,6 +416,19 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Refuse a superseded Pages release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          python3 pipeline/release_order_guard.py
+          --repository "${{ github.repository }}"
+          --workflow "build-epg.yml"
+          --run-id "${{ github.run_id }}"
+
       - name: Setup Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
 
@@ -489,14 +487,11 @@ jobs:
           name: epg-diagnostics-${{ github.run_attempt }}
           path: diagnostics
 
-      - name: Check live guide and send final status
+      - name: Check live guide and record final status
         env:
           BUILD_RESULT: ${{ needs.build.result }}
           DEPLOY_RESULT: ${{ needs.deploy.result }}
           HEALTH_RESULT: ${{ needs.health.result }}
-          NTFY_URL: ${{ secrets.NTFY_URL }}
-          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: |
           URL="https://${{ github.repository_owner }}.github.io/EPG/guide.xml.gz"
           STATUS=$(curl -sIL -o /dev/null -w "%{http_code}" "$URL" || true)
@@ -525,17 +520,6 @@ jobs:
             [ -n "$FAILED_SOURCES" ] && SUMMARY="$SUMMARY sources[$FAILED_SOURCES]"
           fi
           echo "$SUMMARY"
-          if [ -n "$NTFY_URL" ] && [ -n "$NTFY_TOKEN" ] && [ -n "$NTFY_TOPIC" ]; then
-            HEADER_NAME="Authori""zation"
-            AUTH_SCHEME="Bear""er"
-            curl --fail --silent --show-error --max-time 10 \
-              -H "${HEADER_NAME}: ${AUTH_SCHEME} ${NTFY_TOKEN}" \
-              -H "Title: EPG pipeline status" \
-              -d "$SUMMARY — ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-              "$NTFY_URL/$NTFY_TOPIC" || echo "ntfy final status failed"
-          else
-            echo "ntfy final status skipped: notification secret missing"
-          fi
           [ "$STATUS" = "200" ] && [ "$SIZE" -ge 1000000 ] || exit 1
           [ "$BUILD_RESULT" = "success" ] || exit 1
           [ "$DEPLOY_RESULT" = "success" ] || exit 1

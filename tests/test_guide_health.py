@@ -20,11 +20,11 @@ def write_guide(path, channels, programmes):
 
 
 class GuideHealthTest(unittest.TestCase):
-    def test_workflow_has_always_run_final_status_without_public_topic(self):
+    def test_workflow_has_always_run_final_status_without_ci_notification(self):
         workflow = pathlib.Path('.github/workflows/build-epg.yml').read_text(encoding='utf-8')
         self.assertIn('final-status:', workflow)
         self.assertIn('if: always()', workflow)
-        self.assertIn('NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}', workflow)
+        self.assertNotIn('NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}', workflow)
         self.assertIn('epg-diagnostics-${{ github.run_attempt }}', workflow)
         self.assertIn('"$URL" || true', workflow)
         self.assertNotIn('hermes-shameez-', workflow)
