@@ -9,9 +9,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 SOURCE = ROOT / "ops" / "epg_github_watchdog.py"
 RELEASE_SOURCE = ROOT / "pipeline" / "release_order_guard.py"
 WORKFLOW_SOURCE = ROOT / ".github" / "workflows" / "build-epg.yml"
@@ -77,7 +80,7 @@ MUTATIONS = (
                             return self._pending(state, final=True)
                         return False
 """,
-        "tests.test_epg_github_watchdog.ControllerEndToEndTest.test_ntfy_error_leaves_terminal_message_for_the_next_tick",
+        "tests.test_epg_github_watchdog.ControllerEndToEndTest.test_ntfy_error_leaves_terminal_messages_for_the_next_tick",
     ),
     (
         "restore-terminal-state-after-uncertain-dispatch",
@@ -233,7 +236,29 @@ def _assert_source_unchanged(source_path: pathlib.Path, original_digest: str) ->
         raise RuntimeError("mutation runner modified source: %s" % source_path)
 
 
+def _selector_loads_exactly_one_test(test_name: str) -> bool:
+    loader = unittest.TestLoader()
+    suite = loader.loadTestsFromName(test_name)
+    return not loader.errors and suite.countTestCases() == 1
+
+
+def _mutation_was_killed(completed: subprocess.CompletedProcess[str]) -> bool:
+    return completed.returncode != 0
+
+
 def main() -> int:
+    all_test_names = [item[3] for item in MUTATIONS]
+    all_test_names.extend(item[4] for item in ADDITIONAL_MUTATIONS)
+    invalid_names = [
+        test_name
+        for test_name in all_test_names
+        if not _selector_loads_exactly_one_test(test_name)
+    ]
+    if invalid_names:
+        for test_name in invalid_names:
+            print(f"MUTATION selector invalid: {test_name}")
+        return 1
+
     failures = []
     source_digests = {
         path: hashlib.sha256(path.read_bytes()).hexdigest()
@@ -261,6 +286,10 @@ def main() -> int:
             )
             if completed.returncode == 0:
                 print(f"MUTATION {name}: SURVIVED (exit 0)")
+                failures.append(name)
+            elif not _mutation_was_killed(completed):
+                print(f"MUTATION {name}: setup failed; expected exactly one test to run")
+                print(completed.stdout.rstrip())
                 failures.append(name)
             else:
                 print(f"MUTATION {name}: killed (expected non-zero exit {completed.returncode})")
@@ -290,6 +319,10 @@ def main() -> int:
                 )
                 if completed.returncode == 0:
                     print(f"MUTATION {name}: SURVIVED (exit 0)")
+                    failures.append(name)
+                elif not _mutation_was_killed(completed):
+                    print(f"MUTATION {name}: setup failed; expected exactly one test to run")
+                    print(completed.stdout.rstrip())
                     failures.append(name)
                 else:
                     print(f"MUTATION {name}: killed (expected non-zero exit {completed.returncode})")

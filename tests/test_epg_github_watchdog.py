@@ -1358,7 +1358,7 @@ class ClassifierTest(unittest.TestCase):
             self.assertEqual(len(notifier.calls), 1)
             self.assertIn("dependency-error", notifier.calls[0][1])
 
-    def test_controller_sends_one_healthy_report_and_finishes_day(self):
+    def test_controller_keeps_healthy_success_silent_and_finishes_day(self):
         with tempfile.TemporaryDirectory() as td:
             store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
             github = FakeGitHub(
@@ -1377,10 +1377,11 @@ class ClassifierTest(unittest.TestCase):
             result = controller.tick()
             self.assertEqual(result.exit_code, 0)
             self.assertEqual(result.stdout, "")
-            self.assertEqual(len(notifier.calls), 1)
-            self.assertEqual(notifier.calls[0][0], "ntfy:reports")
-            self.assertIn("EPG healthy", notifier.calls[0][1])
-            self.assertTrue(store.load()["days"]["2026-09-04"]["tombstone"])
+            self.assertEqual(notifier.calls, [])
+            day = store.load()["days"]["2026-09-04"]
+            self.assertTrue(day["tombstone"])
+            self.assertEqual(day["final_outcome"], "healthy")
+            self.assertEqual(day["alerts_sent"], {})
             self.assertEqual(github.dispatches, [])
     def test_controller_leaves_queued_schedule_alone_and_sends_one_overdue_alert(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1503,7 +1504,7 @@ class ControllerEndToEndTest(unittest.TestCase):
             self.assertEqual(day["recovery_status"], "in_progress")
             self.assertFalse(day["terminal"])
 
-    def test_recovery_success_is_read_reported_and_tombstoned(self):
+    def test_recovery_success_is_read_silently_and_tombstoned(self):
         watchdog_id = "2026-09-04.0123456789abcdef0123456789abcdef"
         recovery = run(
             312,
@@ -1530,8 +1531,7 @@ class ControllerEndToEndTest(unittest.TestCase):
             result = controller.tick()
 
             self.assertEqual(result.exit_code, 0)
-            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:reports"])
-            self.assertIn("EPG healthy", notifier.calls[0][1])
+            self.assertEqual(notifier.calls, [])
             day = store.load()["days"]["2026-09-04"]
             self.assertTrue(day["tombstone"])
             self.assertEqual(day["final_outcome"], "healthy")
@@ -1597,12 +1597,10 @@ class ControllerEndToEndTest(unittest.TestCase):
             result = controller.tick()
 
             self.assertEqual(result.exit_code, 0)
-            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:reports"])
-            self.assertIn("EPG healthy", notifier.calls[0][1])
+            self.assertEqual(notifier.calls, [])
             day = store.load()["days"]["2026-09-04"]
             self.assertTrue(day["tombstone"])
             self.assertEqual(day["final_outcome"], "healthy")
-            self.assertIn("runs/402", notifier.calls[0][1])
 
     def test_newer_success_after_dispatch_satisfies_recovery_day(self):
         watchdog_id = "2026-09-04.0123456789abcdef0123456789abcdef"
@@ -1629,8 +1627,7 @@ class ControllerEndToEndTest(unittest.TestCase):
             result = controller.tick()
 
             self.assertEqual(result.exit_code, 0)
-            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:reports"])
-            self.assertIn("EPG healthy", notifier.calls[0][1])
+            self.assertEqual(notifier.calls, [])
             day = store.load()["days"]["2026-09-04"]
             self.assertTrue(day["tombstone"])
             self.assertEqual(day["final_outcome"], "healthy")
@@ -2130,8 +2127,7 @@ class ControllerEndToEndTest(unittest.TestCase):
 
             self.assertEqual(second.exit_code, 0)
             self.assertEqual(len(github.dispatches), 1)
-            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts", "ntfy:reports"])
-            self.assertIn("EPG healthy", notifier.calls[1][1])
+            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts"])
             final = store.load()["days"]["2026-09-04"]
             self.assertTrue(final["tombstone"])
             self.assertEqual(final["final_outcome"], "healthy")
@@ -2186,8 +2182,7 @@ class ControllerEndToEndTest(unittest.TestCase):
 
             self.assertEqual(second.exit_code, 0)
             self.assertEqual(len(github.dispatches), 1)
-            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts", "ntfy:reports"])
-            self.assertIn("EPG healthy", notifier.calls[1][1])
+            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts"])
             self.assertEqual(store.load()["days"]["2026-09-04"]["final_outcome"], "healthy")
 
     def test_malformed_dispatch_success_body_is_observed_on_later_tick_without_redispatch(self):
@@ -2237,8 +2232,7 @@ class ControllerEndToEndTest(unittest.TestCase):
 
             self.assertEqual(second.exit_code, 0)
             self.assertEqual(len(github.dispatches), 1)
-            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts", "ntfy:reports"])
-            self.assertIn("EPG healthy", notifier.calls[1][1])
+            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts"])
             self.assertEqual(store.load()["days"]["2026-09-04"]["final_outcome"], "healthy")
 
     def test_uncertain_dispatch_notification_failure_preserves_reservation_and_complete_alert(self):
@@ -2375,8 +2369,8 @@ class ControllerEndToEndTest(unittest.TestCase):
             self.assertEqual(notifier.calls[0][1], "event=state-error state=unreadable")
             self.assertEqual(pathlib.Path(store.path).read_text(encoding="utf-8"), "{not-json")
 
-    def test_ntfy_error_leaves_terminal_message_for_the_next_tick(self):
-        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+    def test_ntfy_error_leaves_terminal_messages_for_the_next_tick(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-degraded.zip").read_bytes()
         with tempfile.TemporaryDirectory() as td:
             controller, store, github, failing = self._controller(
                 td,
@@ -2388,7 +2382,10 @@ class ControllerEndToEndTest(unittest.TestCase):
             result = controller.tick()
             self.assertEqual(result.exit_code, 1)
             pending = store.load()["days"]["2026-09-04"]["pending_messages"]
-            self.assertIn("2026-09-04:report", pending)
+            self.assertEqual(
+                set(pending),
+                {"2026-09-04:report", "2026-09-04:degraded-alert"},
+            )
             self.assertEqual(len(failing.calls), 1)
 
             retry = RecordingNotifier()
@@ -2401,8 +2398,10 @@ class ControllerEndToEndTest(unittest.TestCase):
             )
             result = retry_controller.tick()
             self.assertEqual(result.exit_code, 0)
-            self.assertEqual(len(retry.calls), 1)
-            self.assertEqual(retry.calls[0][0], "ntfy:reports")
+            self.assertEqual(
+                [target for target, _ in retry.calls],
+                ["ntfy:alerts", "ntfy:reports"],
+            )
             self.assertTrue(store.load()["days"]["2026-09-04"]["tombstone"])
 
     def test_check_only_reports_exact_read_only_evidence_for_each_decision(self):
@@ -2542,7 +2541,7 @@ class ControllerEndToEndTest(unittest.TestCase):
             self.assertEqual(second.exit_code, 0)
             self.assertEqual(github.artifact_calls, [601, 601])
             self.assertEqual(len(github.dispatches), 0)
-            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts", "ntfy:reports"])
+            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts"])
             self.assertEqual(final["final_outcome"], "healthy")
             self.assertTrue(final["tombstone"])
             self.assertEqual(deadline, "2026-09-18T18:00:00Z")
@@ -2611,7 +2610,7 @@ class ControllerEndToEndTest(unittest.TestCase):
             final = store.load()["days"]["2026-09-04"]
             self.assertEqual(second.exit_code, 0)
             self.assertEqual(github.artifact_calls, 2)
-            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts", "ntfy:reports"])
+            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts"])
             self.assertTrue(final["tombstone"])
             self.assertEqual(final["final_outcome"], "healthy")
 
