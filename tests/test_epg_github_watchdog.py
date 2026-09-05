@@ -990,6 +990,31 @@ class ClassifierTest(unittest.TestCase):
             self.assertEqual(pending["target"], "ntfy:alerts")
             self.assertIn("event=2026-09-04:dependency-error", pending["body"])
 
+    def test_dispatch_timeout_exits_zero_after_dependency_alert_is_sent(self):
+        class TimedOutDispatchGitHub(FakeGitHub):
+            def dispatch_recovery(self, watchdog_id):
+                self.dispatches.append(watchdog_id)
+                raise TickTimeoutError("tick exceeded its time budget")
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            github = TimedOutDispatchGitHub([])
+            notifier = RecordingNotifier()
+            controller = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC),
+            )
+
+            result = controller.tick()
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(len(notifier.calls), 1)
+            day = store.load()["days"]["2026-09-04"]
+            self.assertEqual(day["pending_messages"], {})
+            self.assertTrue(day["alerts_sent"]["2026-09-04:dependency-error"])
+            self.assertTrue(day["dispatch_attempted"])
+            self.assertIsNone(day["dispatch_api_result"])
+
     def test_hard_tick_budget_is_checked_after_a_slow_external_call(self):
         class SlowGitHub(FakeGitHub):
             def workflow_state(self):
@@ -999,14 +1024,17 @@ class ClassifierTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
             github = SlowGitHub([])
+            notifier = RecordingNotifier()
             controller = WatchdogController(
-                repository="acme/epg", github=github, notifier=RecordingNotifier(), store=store,
+                repository="acme/epg", github=github, notifier=notifier, store=store,
                 now=lambda: dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC),
                 tick_limit_seconds=0.001,
             )
             result = controller.tick()
-            self.assertEqual(result.exit_code, 1)
+            self.assertEqual(result.exit_code, 0)
             self.assertEqual(github.dispatches, [])
+            self.assertEqual(len(notifier.calls), 1)
+            self.assertIn("dependency-error", notifier.calls[0][1])
 
     def test_controller_sends_one_healthy_report_and_finishes_day(self):
         with tempfile.TemporaryDirectory() as td:
