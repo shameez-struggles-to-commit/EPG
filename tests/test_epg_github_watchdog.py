@@ -1209,15 +1209,19 @@ class ClassifierTest(unittest.TestCase):
             self.assertIn("artifact-error", notifier.calls[0][1])
 
     def test_deeply_nested_status_json_becomes_terminal_artifact_error(self):
-        nested = ("[" * 1200 + "0" + "]" * 1200).encode("utf-8")
+        depth = 100000
+        nested = ("[" * depth + "0" + "]" * depth).encode("utf-8")
+        archive = make_zip("pk_status.json", nested)
+        self.assertLess(len(nested), DiagnosticReader.max_artifact_bytes)
+        self.assertLess(len(archive), DiagnosticReader.max_artifact_bytes)
+        with self.assertRaises(RecursionError):
+            json.loads(nested)
         with tempfile.TemporaryDirectory() as td:
             store = StateStore(
                 pathlib.Path(td) / "state.json",
                 pathlib.Path(td) / "watchdog.lock",
             )
-            github = FakeGitHub(
-                [run(720)], [artifact_for(720)], make_zip("pk_status.json", nested)
-            )
+            github = FakeGitHub([run(720)], [artifact_for(720)], archive)
             notifier = RecordingNotifier()
             result = WatchdogController(
                 repository="acme/epg", github=github, notifier=notifier, store=store,
