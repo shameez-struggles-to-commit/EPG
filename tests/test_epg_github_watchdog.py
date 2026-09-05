@@ -941,6 +941,32 @@ class ClassifierTest(unittest.TestCase):
             self.assertTrue(store.acquire())
             store.release()
 
+    def test_dispatch_timeout_persists_dependency_alert_and_reservation(self):
+        class TimedOutDispatchGitHub(FakeGitHub):
+            def dispatch_recovery(self, watchdog_id):
+                self.dispatches.append(watchdog_id)
+                raise TickTimeoutError("tick exceeded its time budget")
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            github = TimedOutDispatchGitHub([])
+            notifier = RecordingNotifier(fail=True)
+            controller = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC),
+            )
+
+            result = controller.tick()
+
+            self.assertEqual(result.exit_code, 1)
+            self.assertEqual(len(github.dispatches), 1)
+            day = store.load()["days"]["2026-09-04"]
+            self.assertTrue(day["dispatch_attempted"])
+            self.assertIsNone(day["dispatch_api_result"])
+            pending = day["pending_messages"]["2026-09-04:dependency-error"]
+            self.assertEqual(pending["target"], "ntfy:alerts")
+            self.assertIn("event=2026-09-04:dependency-error", pending["body"])
+
     def test_hard_tick_budget_is_checked_after_a_slow_external_call(self):
         class SlowGitHub(FakeGitHub):
             def workflow_state(self):

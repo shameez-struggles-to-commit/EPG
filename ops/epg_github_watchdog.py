@@ -1209,9 +1209,7 @@ class WatchdogController:
                 if item.get("terminal"):
                     self.store.finalize_day(state, day)
             return TickResult(0, decision=decision)
-        except TickTimeoutError:
-            return TickResult(1)
-        except (GitHubError, WatchdogSchemaError, DiagnosticError, StateError, OSError, ValueError):
+        except (TickTimeoutError, GitHubError, WatchdogSchemaError, DiagnosticError, StateError, OSError, ValueError) as exc:
             try:
                 state = locals().get("state")
                 if state is None:
@@ -1225,6 +1223,8 @@ class WatchdogController:
                     day = max(pending_days, default=None)
                 if day is not None and not state["days"].get(day, {}).get("tombstone"):
                     delivered = self._dependency_failure(state, day, "dependency-error")
+                    if isinstance(exc, TickTimeoutError):
+                        return TickResult(1)
                     return TickResult(0 if delivered else 1)
             except (NotificationError, OSError, StateError):
                 return TickResult(1)
