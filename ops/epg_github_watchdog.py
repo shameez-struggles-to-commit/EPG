@@ -1090,12 +1090,12 @@ class WatchdogController:
                         ),
                     )
                 except (GitHubError, OSError, ValueError):
-                    self.store.record_dispatch(state, day, {"error": "dispatch-failed"})
-                    record["terminal"] = True
-                    record["final_outcome"] = "dispatch-failed"
+                    self.store.record_dispatch(state, day, {"status": "uncertain"})
                     self._queue(
-                        state, day, "recovery-failed", ALERT_TARGET,
-                        "event=%s:recovery-failed day=%s" % (day, day),
+                        state, day, "dispatch-uncertain", ALERT_TARGET,
+                        "event=%s:dispatch-uncertain day=%s watchdog_id=%s request may have been accepted" % (
+                            day, day, watchdog_id
+                        ),
                         save=False,
                     )
                     self.store.save(state)
