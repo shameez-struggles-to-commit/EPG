@@ -7,6 +7,7 @@ import argparse
 import datetime as _datetime
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.parse
@@ -27,6 +28,7 @@ class GitHubClient:
     def __init__(self, token=None, opener=None):
         self.token = token if token is not None else os.environ.get("GH_TOKEN", "")
         self._opener = opener or urllib.request.urlopen
+        self.last_link_header = ""
 
     def get(self, path, params=None):
         query = urllib.parse.urlencode(params or {})
@@ -42,6 +44,7 @@ class GitHubClient:
             response = self._opener(request, timeout=HTTP_TIMEOUT_SECONDS)
             with response:
                 status = getattr(response, "status", 200)
+                self.last_link_header = getattr(response, "headers", {}).get("Link", "")
                 if status < 200 or status >= 300:
                     raise ReleaseOrderError("GitHub GET returned HTTP %s" % status)
                 try:
@@ -84,6 +87,23 @@ def _run_key(run):
     return (_created_at(run.get("created_at")), run_id)
 
 
+def _next_page(client):
+    header = getattr(client, "last_link_header", "")
+    if header in (None, ""):
+        return None
+    if not isinstance(header, str):
+        raise ReleaseOrderError("invalid run-list pagination header")
+    matches = re.findall(r"<([^>]+)>\s*;\s*rel=\"next\"", header)
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise ReleaseOrderError("ambiguous run-list pagination header")
+    values = urllib.parse.parse_qs(urllib.parse.urlparse(matches[0]).query).get("page", [])
+    if len(values) != 1 or not values[0].isdigit() or int(values[0]) <= 0:
+        raise ReleaseOrderError("invalid run-list next page")
+    return int(values[0])
+
+
 def check_release_order(repository, workflow, run_id, client):
     """Return True only when the current run is the newest complete run."""
     if workflow != "build-epg.yml":
@@ -120,9 +140,26 @@ def check_release_order(repository, workflow, run_id, client):
     runs = response.get("workflow_runs")
     if isinstance(total_count, bool) or not isinstance(total_count, int) or total_count < 0:
         raise ReleaseOrderError("invalid run-list total_count")
-    expected_count = min(total_count, 100)
-    if not isinstance(runs, list) or len(runs) != expected_count:
+    if total_count > 200:
+        raise ReleaseOrderError("run list exceeds bounded 200-run limit")
+    next_page = _next_page(client)
+    expected_next_page = 2 if total_count > 100 else None
+    if next_page is not None and next_page != expected_next_page:
+        raise ReleaseOrderError("run-list next page/count inconsistency")
+    if not isinstance(runs, list) or len(runs) != min(total_count, 100):
         raise ReleaseOrderError("run list is incomplete")
+    if total_count > 100:
+        second = client.get(runs_path, params={"branch": "main", "per_page": 100, "page": 2})
+        if _next_page(client) is not None:
+            raise ReleaseOrderError("run-list next page exceeds bounded read")
+        if not isinstance(second, dict):
+            raise ReleaseOrderError("run list page is not an object")
+        if second.get("total_count") != total_count:
+            raise ReleaseOrderError("run-list page count mismatch")
+        second_runs = second.get("workflow_runs")
+        if not isinstance(second_runs, list) or len(runs) + len(second_runs) != total_count:
+            raise ReleaseOrderError("run list count is incomplete")
+        runs = runs + second_runs
     saw_current = False
     for run in runs:
         if not isinstance(run, dict):

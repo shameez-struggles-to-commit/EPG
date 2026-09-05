@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import pathlib
 import shutil
 import subprocess
@@ -12,6 +13,8 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "ops" / "epg_github_watchdog.py"
+RELEASE_SOURCE = ROOT / "pipeline" / "release_order_guard.py"
+WORKFLOW_SOURCE = ROOT / ".github" / "workflows" / "build-epg.yml"
 TESTS = ROOT / "tests"
 
 
@@ -69,6 +72,26 @@ MUTATIONS = (
 )
 
 
+ADDITIONAL_MUTATIONS = (
+    (
+        "remove-queue-max",
+        WORKFLOW_SOURCE,
+        "  queue: max\n",
+        "",
+        "tests.test_workflow_security.WorkflowSecurityTest.test_build_uses_serial_queue_without_cancellation",
+        "workflow",
+    ),
+    (
+        "disable-release-order-comparison",
+        RELEASE_SOURCE,
+        "        if key > current_key:\n",
+        "        if False and key > current_key:\n",
+        "tests.test_release_order_guard.ReleaseOrderGuardTest.test_same_timestamp_with_larger_run_id_blocks_deploy",
+        "release",
+    ),
+)
+
+
 def make_tree(destination: pathlib.Path) -> None:
     (destination / "ops").mkdir(parents=True)
     (destination / "tests").mkdir(parents=True)
@@ -76,6 +99,32 @@ def make_tree(destination: pathlib.Path) -> None:
     shutil.copy2(TESTS / "__init__.py", destination / "tests" / "__init__.py")
     shutil.copy2(TESTS / "test_epg_github_watchdog.py", destination / "tests" / "test_epg_github_watchdog.py")
     shutil.copytree(TESTS / "fixtures", destination / "tests" / "fixtures")
+
+
+def make_release_tree(destination: pathlib.Path) -> None:
+    (destination / "pipeline").mkdir(parents=True)
+    (destination / "tests").mkdir(parents=True)
+    shutil.copy2(RELEASE_SOURCE, destination / "pipeline" / RELEASE_SOURCE.name)
+    shutil.copy2(TESTS / "__init__.py", destination / "tests" / "__init__.py")
+    shutil.copy2(TESTS / "test_release_order_guard.py", destination / "tests" / "test_release_order_guard.py")
+    shutil.copytree(TESTS / "fixtures", destination / "tests" / "fixtures")
+
+
+def make_workflow_tree(destination: pathlib.Path) -> None:
+    (destination / ".github" / "workflows").mkdir(parents=True)
+    (destination / "pipeline").mkdir(parents=True)
+    (destination / "tests").mkdir(parents=True)
+    shutil.copy2(WORKFLOW_SOURCE, destination / ".github" / "workflows" / WORKFLOW_SOURCE.name)
+    shutil.copy2(TESTS / "__init__.py", destination / "tests" / "__init__.py")
+    shutil.copy2(TESTS / "test_workflow_security.py", destination / "tests" / "test_workflow_security.py")
+    for filename in ("make_iptvorg_channels.py", "fetch_skyhawk.py"):
+        shutil.copy2(ROOT / "pipeline" / filename, destination / "pipeline" / filename)
+
+
+def _assert_source_unchanged(source_path: pathlib.Path, original_digest: str) -> None:
+    current_digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+    if current_digest != original_digest:
+        raise RuntimeError("mutation runner modified source: %s" % source_path)
 
 
 def main() -> int:
@@ -105,10 +154,42 @@ def main() -> int:
                 failures.append(name)
             else:
                 print(f"MUTATION {name}: killed (expected non-zero exit {completed.returncode})")
+
+    builders = {"release": make_release_tree, "workflow": make_workflow_tree}
+    for name, source_path, old, new, test_name, kind in ADDITIONAL_MUTATIONS:
+        original_digest = hashlib.sha256(source_path.read_bytes()).hexdigest()
+        try:
+            with tempfile.TemporaryDirectory(prefix="epg-watchdog-mut-") as directory:
+                tree = pathlib.Path(directory)
+                builders[kind](tree)
+                path = tree / source_path.relative_to(ROOT)
+                source = path.read_text(encoding="utf-8")
+                occurrences = source.count(old)
+                if occurrences != 1:
+                    print(f"MUTATION {name}: setup failed, occurrences={occurrences}")
+                    failures.append(name)
+                    continue
+                path.write_text(source.replace(old, new, 1), encoding="utf-8")
+                completed = subprocess.run(
+                    [sys.executable, "-m", "unittest", test_name, "-q"],
+                    cwd=tree,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                )
+                if completed.returncode == 0:
+                    print(f"MUTATION {name}: SURVIVED (exit 0)")
+                    failures.append(name)
+                else:
+                    print(f"MUTATION {name}: killed (expected non-zero exit {completed.returncode})")
+        finally:
+            _assert_source_unchanged(source_path, original_digest)
+
     if failures:
         print("mutation failures: " + ", ".join(failures))
         return 1
-    print(f"mutation checks passed: {len(MUTATIONS)}")
+    print(f"mutation checks passed: {len(MUTATIONS) + len(ADDITIONAL_MUTATIONS)}")
     return 0
 
 

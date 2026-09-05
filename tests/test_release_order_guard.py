@@ -25,6 +25,9 @@ class FixtureClient:
         if path.endswith("/actions/runs/100"):
             return self.fixture["current_run"]
         if "/actions/workflows/42/runs" in path:
+            if "runs_pages" in self.fixture:
+                page = (params or {}).get("page", 1)
+                return self.fixture["runs_pages"][page - 1]
             return self.fixture["runs"]
         raise AssertionError(f"unexpected GET {path}")
 
@@ -135,15 +138,165 @@ class ReleaseOrderGuardTest(unittest.TestCase):
             "head_branch": "main",
             "created_at": "2026-09-03T20:00:00Z",
         }
-        data["runs"] = {
-            "total_count": 101,
-            "workflow_runs": [current] + [dict(older, id=run_id) for run_id in range(1, 100)],
-        }
+        data["runs_pages"] = [
+            {
+                "total_count": 101,
+                "workflow_runs": [current] + [dict(older, id=run_id) for run_id in range(1, 100)],
+            },
+            {
+                "total_count": 101,
+                "workflow_runs": [dict(older, id=200)],
+            },
+        ]
+        data.pop("runs")
         client = FixtureClient(data)
 
         allowed = guard.check_release_order("owner/repo", "build-epg.yml", 100, client)
 
         self.assertTrue(allowed)
+
+    def test_equal_timestamp_newer_run_on_second_page_blocks_deploy(self):
+        data = fixture("release-current-newest.json")
+        current = data["current_run"]
+        older = {
+            "id": 1,
+            "workflow_id": 42,
+            "head_branch": "main",
+            "created_at": "2026-09-03T20:00:00Z",
+        }
+        data["runs_pages"] = [
+            {
+                "total_count": 101,
+                "workflow_runs": [current] + [dict(older, id=run_id) for run_id in range(1, 100)],
+            },
+            {
+                "total_count": 101,
+                "workflow_runs": [dict(current, id=101)],
+            },
+        ]
+        data.pop("runs")
+        client = FixtureClient(data)
+
+        allowed = guard.check_release_order("owner/repo", "build-epg.yml", 100, client)
+
+        self.assertFalse(allowed)
+        self.assertEqual(client.calls[3][1], {"branch": "main", "per_page": 100, "page": 2})
+
+    def test_more_than_two_hundred_runs_fails_before_fetching_page_two(self):
+        data = fixture("release-current-newest.json")
+        current = data["current_run"]
+        older = {
+            "id": 1,
+            "workflow_id": 42,
+            "head_branch": "main",
+            "created_at": "2026-09-03T20:00:00Z",
+        }
+        data["runs_pages"] = [
+            {
+                "total_count": 201,
+                "workflow_runs": [current] + [dict(older, id=run_id) for run_id in range(1, 100)],
+            },
+            {
+                "total_count": 201,
+                "workflow_runs": [dict(older, id=run_id) for run_id in range(200, 300)],
+            },
+        ]
+        data.pop("runs")
+        client = FixtureClient(data)
+
+        with self.assertRaisesRegex(guard.ReleaseOrderError, "200"):
+            guard.check_release_order("owner/repo", "build-epg.yml", 100, client)
+
+        self.assertEqual(len(client.calls), 3)
+
+    def test_second_page_reported_count_must_match_first_page(self):
+        data = fixture("release-current-newest.json")
+        current = data["current_run"]
+        older = {
+            "id": 1,
+            "workflow_id": 42,
+            "head_branch": "main",
+            "created_at": "2026-09-03T20:00:00Z",
+        }
+        data["runs_pages"] = [
+            {
+                "total_count": 101,
+                "workflow_runs": [current] + [dict(older, id=run_id) for run_id in range(1, 100)],
+            },
+            {
+                "total_count": 102,
+                "workflow_runs": [dict(older, id=200)],
+            },
+        ]
+        data.pop("runs")
+        client = FixtureClient(data)
+
+        with self.assertRaisesRegex(guard.ReleaseOrderError, "count"):
+            guard.check_release_order("owner/repo", "build-epg.yml", 100, client)
+
+    def test_unexpected_next_page_fails_closed_when_count_says_one_page(self):
+        data = fixture("release-current-newest.json")
+        current = data["current_run"]
+        older = {
+            "id": 1,
+            "workflow_id": 42,
+            "head_branch": "main",
+            "created_at": "2026-09-03T20:00:00Z",
+        }
+        data["runs_pages"] = [
+            {
+                "total_count": 100,
+                "workflow_runs": [current] + [dict(older, id=run_id) for run_id in range(1, 100)],
+            },
+        ]
+        data.pop("runs")
+
+        class LinkedClient(FixtureClient):
+            def get(self, path, params=None):
+                response = super().get(path, params)
+                if "/actions/workflows/42/runs" in path:
+                    self.last_link_header = '<https://api.github.com/?page=2>; rel="next"'
+                return response
+
+        client = LinkedClient(data)
+
+        with self.assertRaisesRegex(guard.ReleaseOrderError, "next"):
+            guard.check_release_order("owner/repo", "build-epg.yml", 100, client)
+
+    def test_second_page_next_link_beyond_bound_fails_closed(self):
+        data = fixture("release-current-newest.json")
+        current = data["current_run"]
+        older = {
+            "id": 1,
+            "workflow_id": 42,
+            "head_branch": "main",
+            "created_at": "2026-09-03T20:00:00Z",
+        }
+        data["runs_pages"] = [
+            {
+                "total_count": 101,
+                "workflow_runs": [current] + [dict(older, id=run_id) for run_id in range(1, 100)],
+            },
+            {
+                "total_count": 101,
+                "workflow_runs": [dict(older, id=200)],
+            },
+        ]
+        data.pop("runs")
+
+        class LinkedClient(FixtureClient):
+            def get(self, path, params=None):
+                response = super().get(path, params)
+                if "/actions/workflows/42/runs" in path:
+                    page = (params or {}).get("page", 1)
+                    target = 2 if page == 1 else 3
+                    self.last_link_header = '<https://api.github.com/?page=%d>; rel="next"' % target
+                return response
+
+        client = LinkedClient(data)
+
+        with self.assertRaisesRegex(guard.ReleaseOrderError, "next"):
+            guard.check_release_order("owner/repo", "build-epg.yml", 100, client)
 
     def test_more_than_one_api_page_blocks_deploy_when_newest_page_is_truncated(self):
         client = FixtureClient(fixture("release-more-than-one-page.json"))
