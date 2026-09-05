@@ -405,6 +405,7 @@ jobs:
 
   deploy:
     needs: build
+    timeout-minutes: 15
     permissions:
       actions: read
       contents: read

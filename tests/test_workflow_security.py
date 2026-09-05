@@ -55,6 +55,10 @@ class WorkflowSecurityTest(unittest.TestCase):
             r"(?s)deploy:\n.*?permissions:\n\s+actions: read\n\s+contents: read\n\s+pages: write\n\s+id-token: write",
         )
 
+    def test_deploy_has_fifteen_minute_timeout(self):
+        text = WORKFLOW.read_text(encoding="utf-8")
+        self.assertRegex(text, r"(?s)deploy:\n.*?timeout-minutes: 15")
+
     def test_watchdog_dispatch_input_is_optional_string_with_empty_default(self):
         text = WORKFLOW.read_text(encoding="utf-8")
         self.assertRegex(
