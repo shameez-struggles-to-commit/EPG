@@ -126,7 +126,26 @@ class ReleaseOrderGuardTest(unittest.TestCase):
         with self.assertRaises(guard.ReleaseOrderError):
             guard.check_release_order("owner/repo", "build-epg.yml", 100, client)
 
-    def test_more_than_one_api_page_blocks_deploy(self):
+    def test_complete_newest_page_allows_deploy_when_history_exceeds_one_page(self):
+        data = fixture("release-current-newest.json")
+        current = data["current_run"]
+        older = {
+            "id": 1,
+            "workflow_id": 42,
+            "head_branch": "main",
+            "created_at": "2026-09-03T20:00:00Z",
+        }
+        data["runs"] = {
+            "total_count": 101,
+            "workflow_runs": [current] + [dict(older, id=run_id) for run_id in range(1, 100)],
+        }
+        client = FixtureClient(data)
+
+        allowed = guard.check_release_order("owner/repo", "build-epg.yml", 100, client)
+
+        self.assertTrue(allowed)
+
+    def test_more_than_one_api_page_blocks_deploy_when_newest_page_is_truncated(self):
         client = FixtureClient(fixture("release-more-than-one-page.json"))
 
         with self.assertRaises(guard.ReleaseOrderError):

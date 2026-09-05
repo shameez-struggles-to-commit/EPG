@@ -120,8 +120,9 @@ def check_release_order(repository, workflow, run_id, client):
     runs = response.get("workflow_runs")
     if isinstance(total_count, bool) or not isinstance(total_count, int) or total_count < 0:
         raise ReleaseOrderError("invalid run-list total_count")
-    if not isinstance(runs, list) or len(runs) != total_count or total_count > 100:
-        raise ReleaseOrderError("run list is incomplete or exceeds one page")
+    expected_count = min(total_count, 100)
+    if not isinstance(runs, list) or len(runs) != expected_count:
+        raise ReleaseOrderError("run list is incomplete")
     saw_current = False
     for run in runs:
         if not isinstance(run, dict):
