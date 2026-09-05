@@ -2880,6 +2880,9 @@ class ControllerEndToEndTest(unittest.TestCase):
             ).tick()
             self.assertEqual(result.exit_code, 0)
             self.assertEqual(github.artifact_calls, [])
+            self.assertEqual(github.workflow_calls, 0)
+            self.assertEqual(github.run_calls, [])
+            self.assertEqual(github.dispatches, [])
             self.assertIsNotNone(store.load()["days"]["2026-09-04"]["pending_diagnostic"])
 
     def test_recovery_missing_artifact_then_valid_attempt_two_is_observed_without_redispatch(self):
