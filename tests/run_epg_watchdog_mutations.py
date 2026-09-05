@@ -81,13 +81,27 @@ MUTATIONS = (
     ),
     (
         "restore-terminal-state-after-uncertain-dispatch",
-        """                    self.store.record_dispatch(state, day, {"status": "uncertain"})
+        """                except GitHubError:
+                    if not start_tracker.started:
+                        self.store.clear_unstarted_dispatch(state, day, watchdog_id)
+                        raise GitHubCallNotStarted(
+                            "GitHub operation did not enter its runner"
+                        )
+                    self.store.record_dispatch(state, day, {"status": "uncertain"})
                     self._queue(
+                        state, day, "dispatch-uncertain", ALERT_TARGET,
 """,
-        """                    self.store.record_dispatch(state, day, {"status": "uncertain"})
+        """                except GitHubError:
+                    if not start_tracker.started:
+                        self.store.clear_unstarted_dispatch(state, day, watchdog_id)
+                        raise GitHubCallNotStarted(
+                            "GitHub operation did not enter its runner"
+                        )
+                    self.store.record_dispatch(state, day, {"status": "uncertain"})
                     record["terminal"] = True
                     record["final_outcome"] = "dispatch-failed"
                     self._queue(
+                        state, day, "dispatch-uncertain", ALERT_TARGET,
 """,
         "tests.test_epg_github_watchdog.ControllerEndToEndTest.test_uncertain_dispatch_is_observed_on_later_tick_without_redispatch",
     ),
@@ -128,6 +142,38 @@ MUTATIONS = (
         )
 """,
         "tests.test_epg_github_watchdog.ControllerEndToEndTest.test_pending_diagnostic_is_deferred_when_less_than_one_hundred_seconds_remain",
+    ),
+    (
+        "remove-recursion-safe-diagnostic-json",
+        "except (UnicodeDecodeError, ValueError, TypeError, RecursionError, json.JSONDecodeError) as exc:",
+        "except (UnicodeDecodeError, ValueError, TypeError, json.JSONDecodeError) as exc:",
+        "tests.test_epg_github_watchdog.ClassifierTest.test_deeply_nested_status_json_becomes_terminal_artifact_error",
+    ),
+    (
+        "keep-unstarted-dispatch-reservation",
+        """                    if not start_tracker.started:
+                        self.store.clear_unstarted_dispatch(state, day, watchdog_id)
+                        raise GitHubCallNotStarted(
+                            "GitHub operation did not enter its runner"
+                        )
+""",
+        """                    if not start_tracker.started:
+                        raise GitHubCallNotStarted(
+                            "GitHub operation did not enter its runner"
+                        )
+""",
+        "tests.test_epg_github_watchdog.ControllerEndToEndTest.test_budget_expiring_during_reservation_does_not_block_later_dispatch",
+    ),
+    (
+        "extend-final-deadline-past-short-tick",
+        """        self._final_deadline = min(
+            self._normal_deadline + FINAL_NOTIFICATION_SECONDS,
+            self._tick_deadline,
+        )
+""",
+        """        self._final_deadline = self._normal_deadline + FINAL_NOTIFICATION_SECONDS
+""",
+        "tests.test_epg_github_watchdog.ControllerEndToEndTest.test_short_tick_limit_clamps_final_notification_deadline",
     ),
 )
 

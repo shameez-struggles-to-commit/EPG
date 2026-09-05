@@ -255,7 +255,7 @@ class StateStore:
             return state
         except StateError:
             raise
-        except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        except (OSError, ValueError, TypeError, RecursionError, json.JSONDecodeError) as exc:
             raise StateError("corrupt state") from exc
 
     def save(self, state):
@@ -299,6 +299,19 @@ class StateStore:
     def record_dispatch(self, state, day, result):
         record = self.ensure_day(state, day)
         record["dispatch_api_result"] = result
+        self.save(state)
+
+    def clear_unstarted_dispatch(self, state, day, watchdog_id):
+        record = self.ensure_day(state, day)
+        if (
+            not record.get("dispatch_attempted")
+            or record.get("watchdog_id") != watchdog_id
+            or record.get("dispatch_api_result") is not None
+        ):
+            raise StateError("dispatch reservation changed")
+        record["dispatch_attempted"] = False
+        record["dispatch_requested_at"] = None
+        record["watchdog_id"] = None
         self.save(state)
 
     def queue_message(self, state, day, event_key, target, body, *, save=True):
@@ -499,7 +512,7 @@ class DiagnosticReader:
             raise DiagnosticError("status member oversized")
         try:
             payload = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        except (UnicodeDecodeError, ValueError, TypeError, RecursionError, json.JSONDecodeError) as exc:
             raise DiagnosticError("invalid status JSON") from exc
         if not isinstance(payload, dict) or not payload:
             raise DiagnosticError("invalid status object")
@@ -545,13 +558,15 @@ class DeadlineRunner:
         self.monotonic = monotonic or time.monotonic
         self.deadline = None
 
-    def run(self, args, timeout, input_data=None):
+    def run(self, args, timeout, input_data=None, *, start_tracker=None):
         effective_timeout = timeout
         if self.deadline is not None:
             remaining = self.deadline - self.monotonic()
             if remaining <= 0:
                 return CommandResult(-1, b"", b"tick budget exhausted", timed_out=True)
             effective_timeout = min(timeout, remaining)
+        if start_tracker is not None:
+            start_tracker.started = True
         return self.runner.run(args, effective_timeout, input_data=input_data)
 
 
@@ -623,7 +638,7 @@ class GitHubAdapter:
             return None
         try:
             return json.loads(output)
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        except (TypeError, ValueError, RecursionError, json.JSONDecodeError) as exc:
             raise GitHubError("GitHub returned malformed JSON") from exc
 
     def workflow_state(self):
@@ -713,7 +728,7 @@ class GitHubAdapter:
             raise GitHubError("artifact download was not binary")
         return result.stdout
 
-    def dispatch_recovery(self, watchdog_id):
+    def dispatch_recovery(self, watchdog_id, *, start_tracker=None):
         endpoint = "repos/%s/actions/workflows/%s/dispatches" % (
             self.repository, self.workflow_file
         )
@@ -721,10 +736,14 @@ class GitHubAdapter:
             "ref": "main",
             "inputs": {"watchdog_id": watchdog_id},
         }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        runner_kwargs = {}
+        if isinstance(self.runner, DeadlineRunner):
+            runner_kwargs["start_tracker"] = start_tracker
         result = self.runner.run(
             [self.executable, "api", "--method", "POST", endpoint, "--input", "-"],
             30,
             input_data=body,
+            **runner_kwargs,
         )
         if result.returncode != 0 or getattr(result, "timed_out", False):
             raise GitHubError(
@@ -745,7 +764,7 @@ class GitHubAdapter:
             raise GitHubError("malformed dispatch response")
         try:
             payload = json.loads(output)
-        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        except (TypeError, ValueError, RecursionError, json.JSONDecodeError) as exc:
             raise GitHubError("malformed dispatch response") from exc
         if not isinstance(payload, dict):
             raise GitHubError("malformed dispatch response")
@@ -931,6 +950,17 @@ class TickTimeoutError(RuntimeError):
     """The complete watchdog tick exceeded its hard wall-clock budget."""
 
 
+class GitHubCallNotStarted(TickTimeoutError):
+    """A GitHub operation was rejected before its adapter was entered."""
+
+
+class OperationStartTracker:
+    """Record whether a deadline-wrapped adapter entered its real runner."""
+
+    def __init__(self):
+        self.started = False
+
+
 class WatchdogController:
     """One complete, lock-held watchdog tick."""
 
@@ -960,7 +990,10 @@ class WatchdogController:
         self._tick_deadline = self._tick_start + self.tick_limit_seconds
         normal_seconds = min(NORMAL_WORK_SECONDS, self.tick_limit_seconds)
         self._normal_deadline = self._tick_start + normal_seconds
-        self._final_deadline = self._normal_deadline + FINAL_NOTIFICATION_SECONDS
+        self._final_deadline = min(
+            self._normal_deadline + FINAL_NOTIFICATION_SECONDS,
+            self._tick_deadline,
+        )
         self._normal_network_stopped = False
         self._final_notification_attempted = False
         self._diagnostic_attempts = 0
@@ -1003,10 +1036,13 @@ class WatchdogController:
         self._diagnostic_attempts += 1
         return True
 
-    def _github_call(self, operation, *args):
-        self._check_budget()
+    def _github_call(self, operation, *args, **kwargs):
         try:
-            result = operation(*args)
+            self._check_budget()
+        except TickTimeoutError as exc:
+            raise GitHubCallNotStarted(str(exc)) from exc
+        try:
+            result = operation(*args, **kwargs)
         except TickTimeoutError:
             self._normal_network_stopped = True
             raise
@@ -1400,8 +1436,13 @@ class WatchdogController:
                 self.store.reserve_dispatch(
                     state, day, _iso(now), watchdog_id
                 )
+                start_tracker = OperationStartTracker()
                 try:
-                    dispatch = self._github_call(self.github.dispatch_recovery, watchdog_id)
+                    dispatch = self._github_call(
+                        self.github.dispatch_recovery,
+                        watchdog_id,
+                        start_tracker=start_tracker,
+                    )
                     dispatch_result = {
                         "status": "accepted",
                         "http_status": dispatch.http_status,
@@ -1415,7 +1456,25 @@ class WatchdogController:
                             day, day, watchdog_id
                         ),
                     )
-                except (GitHubError, OSError, ValueError):
+                except GitHubCallNotStarted:
+                    self.store.clear_unstarted_dispatch(state, day, watchdog_id)
+                    raise
+                except GitHubError:
+                    if not start_tracker.started:
+                        self.store.clear_unstarted_dispatch(state, day, watchdog_id)
+                        raise GitHubCallNotStarted(
+                            "GitHub operation did not enter its runner"
+                        )
+                    self.store.record_dispatch(state, day, {"status": "uncertain"})
+                    self._queue(
+                        state, day, "dispatch-uncertain", ALERT_TARGET,
+                        "event=%s:dispatch-uncertain day=%s watchdog_id=%s request may have been accepted" % (
+                            day, day, watchdog_id
+                        ),
+                        save=False,
+                    )
+                    self.store.save(state)
+                except (OSError, ValueError):
                     self.store.record_dispatch(state, day, {"status": "uncertain"})
                     self._queue(
                         state, day, "dispatch-uncertain", ALERT_TARGET,

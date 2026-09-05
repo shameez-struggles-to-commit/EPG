@@ -187,7 +187,9 @@ class FakeGitHub:
     def download_artifact(self, artifact_id):
         return self.archive
 
-    def dispatch_recovery(self, watchdog_id):
+    def dispatch_recovery(self, watchdog_id, start_tracker=None):
+        if start_tracker is not None:
+            start_tracker.started = True
         self.dispatches.append(watchdog_id)
         return type("Dispatch", (), {"http_status": 204, "workflow_run_id": None, "workflow_run_url": None})()
 
@@ -417,6 +419,16 @@ class ClassifierTest(unittest.TestCase):
             path.write_text('{"schema_version": 99, "days": {}}', encoding="utf-8")
             with self.assertRaises(StateError):
                 store.load()
+
+    def test_deeply_nested_state_is_rejected_without_recursion_crash(self):
+        with tempfile.TemporaryDirectory() as td:
+            path = pathlib.Path(td) / "state.json"
+            lock = pathlib.Path(td) / "watchdog.lock"
+            nested = "[" * 1200 + "0" + "]" * 1200
+            path.write_text(nested, encoding="utf-8")
+            with self.assertRaises(StateError):
+                StateStore(path, lock).load()
+            self.assertEqual(path.read_text(encoding="utf-8"), nested)
     def test_state_rejects_incomplete_day_records(self):
         with tempfile.TemporaryDirectory() as td:
             path = pathlib.Path(td) / "state.json"
@@ -783,6 +795,22 @@ class ClassifierTest(unittest.TestCase):
         runner = RecordingRunner({"workflow_run_id": "777", "workflow_run_url": ""}, http_status=200)
         with self.assertRaises(Exception):
             GitHubAdapter("acme/epg", runner=runner).dispatch_recovery(
+                "2026-09-04.0123456789abcdef0123456789abcdef"
+            )
+
+    def test_deeply_nested_github_json_is_rejected_without_recursion_crash(self):
+        nested = ("[" * 1200 + "0" + "]" * 1200).encode("utf-8")
+        adapter = GitHubAdapter("acme/epg", runner=BinaryRunner(nested))
+        with self.assertRaises(GitHubError):
+            adapter.list_artifacts(121)
+
+    def test_deeply_nested_dispatch_json_is_rejected_without_recursion_crash(self):
+        nested = ("[" * 1200 + "0" + "]" * 1200).encode("utf-8")
+        adapter = GitHubAdapter(
+            "acme/epg", runner=BinaryRunner(nested, http_status=200)
+        )
+        with self.assertRaises(GitHubError):
+            adapter.dispatch_recovery(
                 "2026-09-04.0123456789abcdef0123456789abcdef"
             )
     def test_dispatch_rejects_a_success_body_with_unexpected_http_status(self):
@@ -1180,6 +1208,28 @@ class ClassifierTest(unittest.TestCase):
             self.assertEqual(final["final_outcome"], "artifact-error")
             self.assertIn("artifact-error", notifier.calls[0][1])
 
+    def test_deeply_nested_status_json_becomes_terminal_artifact_error(self):
+        nested = ("[" * 1200 + "0" + "]" * 1200).encode("utf-8")
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(
+                pathlib.Path(td) / "state.json",
+                pathlib.Path(td) / "watchdog.lock",
+            )
+            github = FakeGitHub(
+                [run(720)], [artifact_for(720)], make_zip("pk_status.json", nested)
+            )
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            final = store.load()["days"]["2026-09-04"]
+            self.assertEqual(result.exit_code, 0)
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "artifact-error")
+            self.assertIn("artifact-error", notifier.calls[0][1])
+
     def test_notifier_accepts_only_fixed_targets_and_marks_success_after_exit_zero(self):
         runner = RecordingRunner(None)
         notifier = HermesNotifier(runner=runner)
@@ -1230,7 +1280,9 @@ class ClassifierTest(unittest.TestCase):
 
     def test_dispatch_timeout_persists_dependency_alert_and_reservation(self):
         class TimedOutDispatchGitHub(FakeGitHub):
-            def dispatch_recovery(self, watchdog_id):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
                 self.dispatches.append(watchdog_id)
                 raise TickTimeoutError("tick exceeded its time budget")
 
@@ -1256,7 +1308,9 @@ class ClassifierTest(unittest.TestCase):
 
     def test_dispatch_timeout_exits_zero_after_dependency_alert_is_sent(self):
         class TimedOutDispatchGitHub(FakeGitHub):
-            def dispatch_recovery(self, watchdog_id):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
                 self.dispatches.append(watchdog_id)
                 raise TickTimeoutError("tick exceeded its time budget")
 
@@ -2003,7 +2057,9 @@ class ControllerEndToEndTest(unittest.TestCase):
                 self.store = None
                 self.reservation = None
 
-            def dispatch_recovery(self, watchdog_id):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
                 day = self.store.load()["days"]["2026-09-04"]
                 self.reservation = {
                     "dispatch_attempted": day["dispatch_attempted"],
@@ -2026,7 +2082,9 @@ class ControllerEndToEndTest(unittest.TestCase):
 
     def test_uncertain_dispatch_is_observed_on_later_tick_without_redispatch(self):
         class AcceptedButUncertainGitHub(FakeGitHub):
-            def dispatch_recovery(self, watchdog_id):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
                 self.dispatches.append(watchdog_id)
                 recovery = run(
                     319,
@@ -2089,7 +2147,9 @@ class ControllerEndToEndTest(unittest.TestCase):
                 super().__init__(*args, **kwargs)
                 self.dispatch_adapter = GitHubAdapter("acme/epg", runner=TimedOutRunner())
 
-            def dispatch_recovery(self, watchdog_id):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
                 self.dispatches.append(watchdog_id)
                 recovery = run(
                     321,
@@ -2138,7 +2198,9 @@ class ControllerEndToEndTest(unittest.TestCase):
                     ),
                 )
 
-            def dispatch_recovery(self, watchdog_id):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
                 self.dispatches.append(watchdog_id)
                 recovery = run(
                     323,
@@ -2177,7 +2239,9 @@ class ControllerEndToEndTest(unittest.TestCase):
 
     def test_uncertain_dispatch_notification_failure_preserves_reservation_and_complete_alert(self):
         class FailingDispatchGitHub(FakeGitHub):
-            def dispatch_recovery(self, watchdog_id):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
                 self.dispatches.append(watchdog_id)
                 raise GitHubError("stderr must not be persisted")
 
@@ -2211,7 +2275,9 @@ class ControllerEndToEndTest(unittest.TestCase):
 
     def test_uncertain_dispatch_alert_does_not_close_observation_before_expiry(self):
         class FailingDispatchGitHub(FakeGitHub):
-            def dispatch_recovery(self, watchdog_id):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
                 self.dispatches.append(watchdog_id)
                 raise GitHubError("simulated dispatch failure")
 
@@ -2254,7 +2320,9 @@ class ControllerEndToEndTest(unittest.TestCase):
 
     def test_dispatch_failure_saves_nonterminal_uncertain_outcome(self):
         class FailingDispatchGitHub(FakeGitHub):
-            def dispatch_recovery(self, watchdog_id):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
                 self.dispatches.append(watchdog_id)
                 raise GitHubError("simulated dispatch failure")
 
@@ -2893,7 +2961,9 @@ class ControllerEndToEndTest(unittest.TestCase):
                 super().__init__(*args, **kwargs)
                 self.artifact_calls = []
 
-            def dispatch_recovery(self, watchdog_id):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                if start_tracker is not None:
+                    start_tracker.started = True
                 self.dispatches.append(watchdog_id)
                 recovery = run(
                     705, event="workflow_dispatch", run_attempt=2,
@@ -3226,6 +3296,99 @@ class ControllerEndToEndTest(unittest.TestCase):
             self.assertIsNone(record["watchdog_id"])
             self.assertIsNone(record["dispatch_api_result"])
 
+    def test_budget_expiring_during_reservation_does_not_block_later_dispatch(self):
+        class Clock:
+            values = [0.0]
+
+            def __call__(self):
+                if len(self.values) > 1:
+                    return self.values.pop(0)
+                return self.values[0]
+
+            def reset(self):
+                self.values = [0.0]
+
+            def expire_at_runner_boundary(self):
+                self.values = [0.0, 240.0]
+
+        class BoundaryRunner:
+            def __init__(self):
+                self.calls = []
+
+            def run(self, args, timeout, input_data=None):
+                self.calls.append((list(args), timeout, input_data))
+                return type("Result", (), {
+                    "returncode": 0,
+                    "stdout": b"",
+                    "stderr": b"",
+                })()
+
+        class RunnerBackedGitHub(FakeGitHub):
+            def dispatch_recovery(self, watchdog_id, start_tracker=None):
+                result = self.runner.run(
+                    ["dispatch"], 30, input_data=b"{}", start_tracker=start_tracker
+                )
+                if result.returncode != 0 or getattr(result, "timed_out", False):
+                    raise GitHubError(
+                        "dispatch command failed",
+                        timed_out=getattr(result, "timed_out", False),
+                    )
+                self.dispatches.append(watchdog_id)
+                return type("Dispatch", (), {
+                    "http_status": 204,
+                    "workflow_run_id": None,
+                    "workflow_run_url": None,
+                })()
+
+        class CrossingStore(StateStore):
+            cross_once = True
+
+            def reserve_dispatch(self, state, day, requested_at, watchdog_id):
+                super().reserve_dispatch(state, day, requested_at, watchdog_id)
+                if self.cross_once:
+                    self.cross_once = False
+                    clock.expire_at_runner_boundary()
+
+        with tempfile.TemporaryDirectory() as td:
+            clock = Clock()
+            boundary_runner = BoundaryRunner()
+            store = CrossingStore(
+                pathlib.Path(td) / "state.json",
+                pathlib.Path(td) / "watchdog.lock",
+            )
+            github = RunnerBackedGitHub([
+                [run(721, conclusion="failure")],
+                [run(721, conclusion="failure")],
+            ])
+            github.runner = boundary_runner
+            notifier = RecordingNotifier()
+            controller = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+                monotonic=clock,
+            )
+
+            first = controller.tick()
+            first_record = store.load()["days"]["2026-09-04"]
+            self.assertEqual(first.exit_code, 0)
+            self.assertEqual(github.dispatches, [])
+            self.assertEqual(boundary_runner.calls, [])
+            self.assertFalse(first_record["dispatch_attempted"])
+            self.assertIsNone(first_record["dispatch_requested_at"])
+            self.assertIsNone(first_record["watchdog_id"])
+            self.assertIsNone(first_record["dispatch_api_result"])
+
+            clock.reset()
+            second = controller.tick()
+            second_record = store.load()["days"]["2026-09-04"]
+            self.assertEqual(second.exit_code, 0)
+            self.assertEqual(len(github.dispatches), 1)
+            self.assertTrue(second_record["dispatch_attempted"])
+            self.assertEqual(
+                second_record["dispatch_api_result"],
+                {"status": "accepted", "http_status": 204},
+            )
+
     def test_tick_budget_phase_limits_sum_and_deadlines_share_tick_start(self):
         self.assertEqual(
             NORMAL_WORK_SECONDS + FINAL_NOTIFICATION_SECONDS
@@ -3242,6 +3405,23 @@ class ControllerEndToEndTest(unittest.TestCase):
             self.assertEqual(controller._tick_deadline, 310.0)
             self.assertEqual(controller._normal_deadline, 250.0)
             self.assertEqual(controller._final_deadline, 280.0)
+            controller._clear_budget()
+
+    def test_short_tick_limit_clamps_final_notification_deadline(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(
+                pathlib.Path(td) / "state.json",
+                pathlib.Path(td) / "watchdog.lock",
+            )
+            controller = WatchdogController(
+                repository="acme/epg", github=FakeGitHub([]),
+                notifier=RecordingNotifier(), store=store, monotonic=lambda: 10.0,
+                tick_limit_seconds=5.0,
+            )
+            controller._begin_budget()
+            self.assertEqual(controller._tick_deadline, 15.0)
+            self.assertEqual(controller._normal_deadline, 15.0)
+            self.assertEqual(controller._final_deadline, 15.0)
             controller._clear_budget()
 
 
