@@ -1228,8 +1228,6 @@ class WatchdogController:
                     day = max(pending_days, default=None)
                 if day is not None and not state["days"].get(day, {}).get("tombstone"):
                     delivered = self._dependency_failure(state, day, "dependency-error")
-                    if isinstance(exc, TickTimeoutError):
-                        return TickResult(1)
                     return TickResult(0 if delivered else 1)
             except (NotificationError, OSError, StateError):
                 return TickResult(1)
