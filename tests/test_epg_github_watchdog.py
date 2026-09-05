@@ -216,6 +216,28 @@ class ClassifierTest(unittest.TestCase):
             )
         self.assertIn("schema", str(raised.exception).lower())
 
+    def test_non_string_status_is_rejected_as_schema_error(self):
+        slot = dt.datetime(2026, 9, 4, 4, 17, tzinfo=UTC)
+        malformed = run(407)
+        malformed["status"] = []
+        with self.assertRaises(WatchdogSchemaError):
+            classify_day(
+                now=dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC),
+                slot=slot,
+                runs=[malformed],
+            )
+
+    def test_non_string_conclusion_is_rejected_as_schema_error(self):
+        slot = dt.datetime(2026, 9, 4, 4, 17, tzinfo=UTC)
+        malformed = run(408)
+        malformed["conclusion"] = []
+        with self.assertRaises(WatchdogSchemaError):
+            classify_day(
+                now=dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC),
+                slot=slot,
+                runs=[malformed],
+            )
+
     def test_boolean_run_id_is_rejected_as_schema_error(self):
         slot = dt.datetime(2026, 9, 4, 4, 17, tzinfo=UTC)
         malformed = run(103)

@@ -703,11 +703,16 @@ def _validate_run(run):
     if not isinstance(head_branch, str):
         raise WatchdogSchemaError("run schema has invalid head_branch")
     status = run.get("status")
+    if not isinstance(status, str):
+        raise WatchdogSchemaError("run schema has invalid status")
     if status != "completed" and status not in ACTIVE_STATUSES:
         raise WatchdogSchemaError("run schema has unknown status")
-    if status == "completed" and run.get("conclusion") not in TERMINAL_CONCLUSIONS:
+    conclusion = run.get("conclusion")
+    if conclusion is not None and not isinstance(conclusion, str):
+        raise WatchdogSchemaError("run schema has invalid conclusion")
+    if status == "completed" and conclusion not in TERMINAL_CONCLUSIONS:
         raise WatchdogSchemaError("run schema has unknown conclusion")
-    if status in ACTIVE_STATUSES and run.get("conclusion") is not None:
+    if status in ACTIVE_STATUSES and conclusion is not None:
         raise WatchdogSchemaError("run schema has unknown conclusion")
     run_attempt = run.get("run_attempt")
     if not isinstance(run_attempt, int) or isinstance(run_attempt, bool) or run_attempt < 1:
