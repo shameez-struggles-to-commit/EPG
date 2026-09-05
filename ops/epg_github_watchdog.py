@@ -341,7 +341,7 @@ class DiagnosticReader:
     def validate_artifact(self, run, artifacts):
         if not isinstance(run, dict) or not isinstance(run.get("id"), int) or isinstance(run.get("id"), bool):
             raise DiagnosticError("invalid workflow run metadata")
-        attempt = run.get("run_attempt", 1)
+        attempt = run.get("run_attempt")
         if not isinstance(attempt, int) or isinstance(attempt, bool) or attempt < 1:
             raise DiagnosticError("invalid run attempt")
         expected = "epg-diagnostics-%d" % attempt
@@ -354,26 +354,33 @@ class DiagnosticReader:
         artifact_id = artifact.get("id")
         if not isinstance(artifact_id, int) or isinstance(artifact_id, bool) or artifact_id <= 0:
             raise DiagnosticError("invalid diagnostic artifact id")
-        if artifact.get("expired") is True:
+        if not isinstance(artifact.get("expired"), bool):
+            raise DiagnosticError("invalid artifact expired flag")
+        if artifact["expired"]:
             raise DiagnosticError("diagnostic artifact expired")
         expires_at = artifact.get("expires_at")
-        if expires_at:
-            try:
-                if _parse_time(expires_at) <= self.now:
-                    raise DiagnosticError("diagnostic artifact expired")
-            except DiagnosticError:
-                raise
-            except (TypeError, ValueError) as exc:
-                raise DiagnosticError("invalid artifact expiry") from exc
+        if not isinstance(expires_at, str) or not expires_at:
+            raise DiagnosticError("invalid artifact expiry")
+        try:
+            if _parse_time(expires_at) <= self.now:
+                raise DiagnosticError("diagnostic artifact expired")
+        except DiagnosticError:
+            raise
+        except (TypeError, ValueError) as exc:
+            raise DiagnosticError("invalid artifact expiry") from exc
         workflow_run = artifact.get("workflow_run")
-        if isinstance(workflow_run, dict):
-            artifact_run_id = workflow_run.get("id")
-            artifact_branch = workflow_run.get("head_branch")
-        else:
-            # Keep the fixed local fixture format readable while preferring the
-            # GitHub REST shape used in production.
-            artifact_run_id = artifact.get("workflow_run_id")
-            artifact_branch = artifact.get("workflow_run_head_branch")
+        if not isinstance(workflow_run, dict):
+            raise DiagnosticError("invalid artifact workflow run")
+        artifact_run_id = workflow_run.get("id")
+        artifact_branch = workflow_run.get("head_branch")
+        if (
+            not isinstance(artifact_run_id, int)
+            or isinstance(artifact_run_id, bool)
+            or artifact_run_id <= 0
+        ):
+            raise DiagnosticError("invalid artifact workflow run id")
+        if not isinstance(artifact_branch, str):
+            raise DiagnosticError("invalid artifact workflow branch")
         if artifact_run_id != run.get("id"):
             raise DiagnosticError("artifact run mismatch")
         if artifact_branch != "main" or run.get("head_branch") != "main":
@@ -668,7 +675,13 @@ class Decision:
 
 
 def _parse_time(value):
-    return _dt.datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+    if not isinstance(value, str) or not value:
+        raise ValueError("timestamp must be a non-empty string")
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    parsed = _dt.datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        raise ValueError("timestamp must include a timezone")
+    return parsed.astimezone(UTC)
 
 
 def _order(run):
@@ -683,6 +696,12 @@ def _validate_run(run):
         or run.get("id") <= 0
     ):
         raise WatchdogSchemaError("run schema has invalid id")
+    event = run.get("event")
+    if not isinstance(event, str):
+        raise WatchdogSchemaError("run schema has invalid event")
+    head_branch = run.get("head_branch")
+    if not isinstance(head_branch, str):
+        raise WatchdogSchemaError("run schema has invalid head_branch")
     status = run.get("status")
     if status != "completed" and status not in ACTIVE_STATUSES:
         raise WatchdogSchemaError("run schema has unknown status")
@@ -690,6 +709,9 @@ def _validate_run(run):
         raise WatchdogSchemaError("run schema has unknown conclusion")
     if status in ACTIVE_STATUSES and run.get("conclusion") is not None:
         raise WatchdogSchemaError("run schema has unknown conclusion")
+    run_attempt = run.get("run_attempt")
+    if not isinstance(run_attempt, int) or isinstance(run_attempt, bool) or run_attempt < 1:
+        raise WatchdogSchemaError("run schema has invalid run_attempt")
     try:
         _parse_time(run["created_at"])
     except (KeyError, TypeError, ValueError) as exc:
@@ -849,9 +871,10 @@ class WatchdogController:
         return value.astimezone(UTC)
 
     def _due_day(self, now):
-        if now < slot_for_day(now.date()) + _dt.timedelta(hours=13):
-            return None
-        return now.date().isoformat()
+        today_deadline = slot_for_day(now.date()) + _dt.timedelta(hours=13)
+        if now >= today_deadline:
+            return now.date().isoformat()
+        return (now.date() - _dt.timedelta(days=1)).isoformat()
 
     def _pending(self, state):
         for day in sorted(state["days"], reverse=True):
@@ -888,7 +911,7 @@ class WatchdogController:
             artifact = reader.validate_artifact(run, artifacts)
             archive = self._github_call(self.github.download_artifact, artifact["id"])
             diagnostic = reader.read(run, [artifact], archive)
-        except (StopIteration, GitHubError, DiagnosticError, KeyError, TypeError, ValueError):
+        except (StopIteration, GitHubError, DiagnosticError, TickTimeoutError, KeyError, TypeError, ValueError):
             record["terminal"] = True
             record["final_outcome"] = "artifact-error"
             self._queue(
@@ -958,17 +981,29 @@ class WatchdogController:
             )
             self.store.save(state)
             return
-        if recovery is None and runs:
-            day_decision = classify_day(now=now, slot=slot_for_day(day), runs=runs)
-            if day_decision.kind in {"healthy", "newer-success"}:
-                self._production(state, day, record, day_decision.production_run, now)
-                return
         if recovery is None:
+            if runs:
+                day_decision = classify_day(now=now, slot=slot_for_day(day), runs=runs)
+                if day_decision.kind in {"healthy", "newer-success"}:
+                    self._production(state, day, record, day_decision.production_run, now)
+                    return
             if age >= _dt.timedelta(hours=2):
                 self._queue(
                     state, day, "unbound-recovery", ALERT_TARGET,
                     "event=%s:unbound-recovery day=%s" % (day, day),
                 )
+            return
+        newer_successes = [
+            item for item in runs
+            if item["head_branch"] == "main"
+            and item["status"] == "completed"
+            and item["conclusion"] == "success"
+            and _order(item) > _order(recovery)
+        ]
+        if newer_successes:
+            self._production(
+                state, day, record, max(newer_successes, key=_order), now
+            )
             return
         record["recovery_run_id"] = recovery["id"]
         record["recovery_status"] = recovery["status"]
@@ -996,6 +1031,70 @@ class WatchdogController:
                 save=False,
             )
             self.store.save(state)
+
+    def _process_slot(self, state, day, record, runs, now, oldest_day):
+        slot = slot_for_day(day)
+        decision = classify_day(now=now, slot=slot, runs=runs)
+        if decision.scheduled_run:
+            record["scheduled_run_id"] = decision.scheduled_run["id"]
+            record["scheduled_conclusion"] = decision.scheduled_run.get("conclusion")
+        self.store.save(state)
+        if decision.kind in {"healthy", "newer-success"}:
+            self._production(state, day, record, decision.production_run, now)
+        elif decision.kind == "scheduled-overdue":
+            self._queue(
+                state, day, "scheduled-run-overdue", ALERT_TARGET,
+                "event=%s:scheduled-run-overdue day=%s run=%s" % (
+                    day, day, decision.scheduled_run["id"]
+                ),
+            )
+        elif decision.should_dispatch and not record.get("dispatch_attempted"):
+            self._github_call(self.github.workflow_state)
+            second_runs = self._github_call(
+                self.github.list_runs, _iso(slot_for_day(oldest_day))
+            )
+            second = classify_day(now=now, slot=slot, runs=second_runs)
+            decision = second
+            if second.kind in {"healthy", "newer-success"}:
+                self._production(state, day, record, second.production_run, now)
+            elif second.kind == "scheduled-overdue":
+                self._queue(
+                    state, day, "scheduled-run-overdue", ALERT_TARGET,
+                    "event=%s:scheduled-run-overdue day=%s run=%s" % (
+                        day, day, second.scheduled_run["id"]
+                    ),
+                )
+            elif not any(item.get("status") in ACTIVE_STATUSES for item in second_runs):
+                watchdog_id = "%s.%s" % (day, secrets.token_hex(16))
+                if not RECOVERY_ID_RE.fullmatch(watchdog_id):
+                    raise StateError("invalid recovery identity")
+                self.store.reserve_dispatch(
+                    state, day, _iso(now), watchdog_id
+                )
+                try:
+                    dispatch = self._github_call(self.github.dispatch_recovery, watchdog_id)
+                    self.store.record_dispatch(state, day, {
+                        "http_status": dispatch.http_status,
+                        "workflow_run_id": dispatch.workflow_run_id,
+                        "workflow_run_url": dispatch.workflow_run_url,
+                    })
+                    self._queue(
+                        state, day, "recovery-start", ALERT_TARGET,
+                        "event=%s:recovery-start day=%s watchdog_id=%s" % (
+                            day, day, watchdog_id
+                        ),
+                    )
+                except (GitHubError, OSError, ValueError):
+                    self.store.record_dispatch(state, day, {"error": "dispatch-failed"})
+                    record["terminal"] = True
+                    record["final_outcome"] = "dispatch-failed"
+                    self._queue(
+                        state, day, "recovery-failed", ALERT_TARGET,
+                        "event=%s:recovery-failed day=%s" % (day, day),
+                        save=False,
+                    )
+                    self.store.save(state)
+        return decision
 
     def _dependency_failure(self, state, day, event_type):
         self._queue(
@@ -1046,15 +1145,13 @@ class WatchdogController:
             if not self._deliver(state):
                 return TickResult(1)
             due_day = self._due_day(now)
-            due_slot = slot_for_day(due_day) if due_day else None
             recovery_days = [
                 day for day, record in state["days"].items()
                 if not record.get("tombstone") and record.get("dispatch_attempted")
                 and not record.get("terminal")
             ]
-            # Expiry is a local state transition.  Resolve it before any
-            # GitHub read so an old unbound recovery cannot keep querying after
-            # its artifact-retention window has ended.
+            # Expiry is a local state transition. Resolve it before any GitHub
+            # read so an old recovery cannot query after artifact retention ends.
             for day in sorted(recovery_days, reverse=True):
                 record = state["days"][day]
                 requested = record.get("dispatch_requested_at")
@@ -1064,105 +1161,48 @@ class WatchdogController:
                     recovery_age = _dt.timedelta(days=999)
                 if recovery_age >= _dt.timedelta(days=14):
                     self._process_recovery(state, day, record, [], now)
-            pending_recoveries = [
+
+            older_days = sorted(
                 day for day, record in state["days"].items()
-                if day != due_day
-                and not record.get("tombstone") and record.get("dispatch_attempted")
+                if day < due_day
+                and not record.get("tombstone")
                 and not record.get("terminal")
-            ]
-            due_record = state["days"].get(due_day) if due_day else None
-            if due_record and (due_record.get("tombstone") or due_record.get("terminal")) and not pending_recoveries:
-                if not self._deliver(state):
-                    return TickResult(1)
-                if due_record.get("terminal"):
-                    self.store.finalize_day(state, due_day)
-                return TickResult(0)
-            if due_day is None and not pending_recoveries:
+            )
+            due_record = state["days"].get(due_day)
+            needs_due = due_record is None or not (
+                due_record.get("tombstone") or due_record.get("terminal")
+            )
+            work_days = older_days + ([due_day] if needs_due else [])
+            if not work_days:
                 if not self._deliver(state):
                     return TickResult(1)
                 for day, item in list(state["days"].items()):
                     if item.get("terminal"):
                         self.store.finalize_day(state, day)
                 return TickResult(0)
-            oldest = min(([due_day] if due_day else []) + pending_recoveries)
+
+            oldest = min(work_days)
             self._github_call(self.github.workflow_state)
             runs = self._github_call(self.github.list_runs, _iso(slot_for_day(oldest)))
-            for day in sorted(pending_recoveries, reverse=True):
+            for day in sorted(older_days, reverse=True):
                 active_day = day
-                self._process_recovery(state, day, state["days"][day], runs, now)
-            if due_day is None:
-                if not self._deliver(state):
-                    return TickResult(1)
-                for day, item in list(state["days"].items()):
-                    if item.get("terminal"):
-                        self.store.finalize_day(state, day)
-                return TickResult(0)
-            record = state["days"].get(due_day)
-            active_day = due_day
+                record = state["days"][day]
+                if record.get("dispatch_attempted"):
+                    self._process_recovery(state, day, record, runs, now)
+                else:
+                    self._process_slot(state, day, record, runs, now, oldest)
+
             decision = None
-            if record and record.get("dispatch_attempted") and not record.get("terminal"):
-                self._process_recovery(state, due_day, record, runs, now)
-            elif not (record and record.get("tombstone")):
-                record = self.store.ensure_day(state, due_day)
-                decision = classify_day(now=now, slot=due_slot, runs=runs)
-                if decision.scheduled_run:
-                    record["scheduled_run_id"] = decision.scheduled_run["id"]
-                    record["scheduled_conclusion"] = decision.scheduled_run.get("conclusion")
-                self.store.save(state)
-                if decision.kind in {"healthy", "newer-success"}:
-                    self._production(state, due_day, record, decision.production_run, now)
-                elif decision.kind == "scheduled-overdue":
-                    self._queue(
-                        state, due_day, "scheduled-run-overdue", ALERT_TARGET,
-                        "event=%s:scheduled-run-overdue day=%s run=%s" % (
-                            due_day, due_day, decision.scheduled_run["id"]
-                        ),
+            if needs_due:
+                active_day = due_day
+                record = state["days"].get(due_day)
+                if record and record.get("dispatch_attempted") and not record.get("terminal"):
+                    self._process_recovery(state, due_day, record, runs, now)
+                elif not (record and record.get("tombstone")):
+                    record = self.store.ensure_day(state, due_day)
+                    decision = self._process_slot(
+                        state, due_day, record, runs, now, oldest
                     )
-                elif decision.should_dispatch and not record.get("dispatch_attempted"):
-                    self._github_call(self.github.workflow_state)
-                    second_runs = self._github_call(self.github.list_runs, _iso(slot_for_day(oldest)))
-                    second = classify_day(now=now, slot=due_slot, runs=second_runs)
-                    if second.kind in {"healthy", "newer-success", "scheduled-overdue"}:
-                        decision = second
-                        if second.kind in {"healthy", "newer-success"}:
-                            self._production(state, due_day, record, second.production_run, now)
-                        else:
-                            self._queue(
-                                state, due_day, "scheduled-run-overdue", ALERT_TARGET,
-                                "event=%s:scheduled-run-overdue day=%s run=%s" % (
-                                    due_day, due_day, second.scheduled_run["id"]
-                                ),
-                            )
-                    elif not any(item.get("status") in ACTIVE_STATUSES for item in second_runs):
-                        watchdog_id = "%s.%s" % (due_day, secrets.token_hex(16))
-                        if not RECOVERY_ID_RE.fullmatch(watchdog_id):
-                            raise StateError("invalid recovery identity")
-                        self.store.reserve_dispatch(
-                            state, due_day, _iso(now), watchdog_id
-                        )
-                        try:
-                            dispatch = self._github_call(self.github.dispatch_recovery, watchdog_id)
-                            self.store.record_dispatch(state, due_day, {
-                                "http_status": dispatch.http_status,
-                                "workflow_run_id": dispatch.workflow_run_id,
-                                "workflow_run_url": dispatch.workflow_run_url,
-                            })
-                            self._queue(
-                                state, due_day, "recovery-start", ALERT_TARGET,
-                                "event=%s:recovery-start day=%s watchdog_id=%s" % (
-                                    due_day, due_day, watchdog_id
-                                ),
-                            )
-                        except (GitHubError, OSError, ValueError):
-                            self.store.record_dispatch(state, due_day, {"error": "dispatch-failed"})
-                            record["terminal"] = True
-                            record["final_outcome"] = "dispatch-failed"
-                            self._queue(
-                                state, due_day, "recovery-failed", ALERT_TARGET,
-                                "event=%s:recovery-failed day=%s" % (due_day, due_day),
-                                save=False,
-                            )
-                            self.store.save(state)
             if not self._deliver(state):
                 return TickResult(1, decision=decision)
             for day, item in list(state["days"].items()):

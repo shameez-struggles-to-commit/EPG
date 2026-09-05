@@ -1,1 +1,1 @@
-{"total_count":1,"artifacts":[{"id":88,"name":"epg-diagnostics-1","expired":false,"size_in_bytes":256,"workflow_run_id":101,"workflow_run_head_branch":"main"}]}
+{"total_count":1,"artifacts":[{"id":88,"name":"epg-diagnostics-1","expired":false,"expires_at":"2099-01-01T00:00:00Z","size_in_bytes":256,"workflow_run":{"id":101,"head_branch":"main"}}]}

@@ -30,6 +30,7 @@ from ops.epg_github_watchdog import (
     StateError,
     SubprocessAdapter,
     TickResult,
+    TickTimeoutError,
     WatchdogController,
     WatchdogSchemaError,
     bind_recovery_run,
@@ -43,13 +44,14 @@ UTC = dt.timezone.utc
 
 
 def run(run_id, *, event="schedule", status="completed", conclusion="success",
-        created="2026-09-04T04:17:01Z", branch="main"):
+        created="2026-09-04T04:17:01Z", branch="main", run_attempt=1):
     return {
         "id": run_id,
         "event": event,
         "status": status,
         "conclusion": conclusion,
         "created_at": created,
+        "run_attempt": run_attempt,
         "head_branch": branch,
     }
 
@@ -76,9 +78,9 @@ def artifact_for(run_id=101):
         "id": 88,
         "name": "epg-diagnostics-1",
         "expired": False,
+        "expires_at": "2099-01-01T00:00:00Z",
         "size_in_bytes": 256,
-        "workflow_run_id": run_id,
-        "workflow_run_head_branch": "main",
+        "workflow_run": {"id": run_id, "head_branch": "main"},
     }
 
 
@@ -224,6 +226,49 @@ class ClassifierTest(unittest.TestCase):
                 slot=slot,
                 runs=[malformed],
             )
+    def test_missing_event_is_rejected_as_schema_error(self):
+        slot = dt.datetime(2026, 9, 4, 4, 17, tzinfo=UTC)
+        malformed = run(403)
+        malformed.pop("event")
+        with self.assertRaises(WatchdogSchemaError):
+            classify_day(
+                now=dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC),
+                slot=slot,
+                runs=[malformed],
+            )
+
+    def test_non_string_head_branch_is_rejected_as_schema_error(self):
+        slot = dt.datetime(2026, 9, 4, 4, 17, tzinfo=UTC)
+        malformed = run(404)
+        malformed["head_branch"] = None
+        with self.assertRaises(WatchdogSchemaError):
+            classify_day(
+                now=dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC),
+                slot=slot,
+                runs=[malformed],
+            )
+
+    def test_naive_created_at_is_rejected_as_schema_error(self):
+        slot = dt.datetime(2026, 9, 4, 4, 17, tzinfo=UTC)
+        malformed = run(405, created="2026-09-04T04:17:01")
+        with self.assertRaises(WatchdogSchemaError):
+            classify_day(
+                now=dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC),
+                slot=slot,
+                runs=[malformed],
+            )
+
+    def test_missing_run_attempt_is_rejected_as_schema_error(self):
+        slot = dt.datetime(2026, 9, 4, 4, 17, tzinfo=UTC)
+        malformed = run(406)
+        malformed.pop("run_attempt")
+        with self.assertRaises(WatchdogSchemaError):
+            classify_day(
+                now=dt.datetime(2026, 9, 4, 17, 20, tzinfo=UTC),
+                slot=slot,
+                runs=[malformed],
+            )
+
     def test_failed_scheduled_run_after_deadline_requests_recovery(self):
         slot = dt.datetime(2026, 9, 4, 4, 17, tzinfo=UTC)
         decision = classify_day(
@@ -654,6 +699,51 @@ class ClassifierTest(unittest.TestCase):
         runner.deadline = 300.0
         runner.run(["fixed-command"], 60, input_data=None)
         self.assertEqual(underlying.calls[0][1], 0.5)
+    def test_diagnostic_reader_requires_run_attempt(self):
+        successful = run(407)
+        successful.pop("run_attempt")
+        with self.assertRaises(DiagnosticError):
+            DiagnosticReader().read(
+                successful,
+                [artifact_for(407)],
+                (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes(),
+            )
+
+    def test_diagnostic_reader_requires_boolean_expired_field(self):
+        successful = run(408)
+        artifact = artifact_for(408)
+        artifact.pop("expired")
+        with self.assertRaises(DiagnosticError):
+            DiagnosticReader().read(
+                successful,
+                [artifact],
+                (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes(),
+            )
+
+    def test_diagnostic_reader_requires_aware_expiry_timestamp(self):
+        successful = run(409)
+        artifact = artifact_for(409)
+        artifact.pop("expires_at")
+        with self.assertRaises(DiagnosticError):
+            DiagnosticReader().read(
+                successful,
+                [artifact],
+                (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes(),
+            )
+
+    def test_diagnostic_reader_requires_nested_workflow_run_metadata(self):
+        successful = run(410)
+        artifact = artifact_for(410)
+        artifact.pop("workflow_run")
+        artifact["workflow_run_id"] = 410
+        artifact["workflow_run_head_branch"] = "main"
+        with self.assertRaises(DiagnosticError):
+            DiagnosticReader().read(
+                successful,
+                [artifact],
+                (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes(),
+            )
+
     def test_healthy_diagnostic_artifact_is_read_in_memory(self):
         artifact = json.loads((ROOT / "tests/fixtures/epg_watchdog/artifacts-healthy.json").read_text())
         successful = run(101)
@@ -665,11 +755,7 @@ class ClassifierTest(unittest.TestCase):
         self.assertEqual(result.degraded, {})
     def test_healthy_artifact_accepts_github_nested_workflow_run_metadata(self):
         successful = run(101)
-        successful["run_attempt"] = 1
         nested = artifact_for()
-        nested.pop("workflow_run_id")
-        nested.pop("workflow_run_head_branch")
-        nested["workflow_run"] = {"id": 101, "head_branch": "main"}
         result = DiagnosticReader().read(
             successful,
             [nested],
@@ -750,9 +836,7 @@ class ClassifierTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
             wrong = artifact_for()
-            wrong.pop("workflow_run_id")
-            wrong.pop("workflow_run_head_branch")
-            wrong["workflow_run"] = {"id": 999, "head_branch": "main"}
+            wrong["workflow_run"]["id"] = 999
             github = TrackingGitHub(
                 [run(303)], [wrong],
                 (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes(),
@@ -928,19 +1012,50 @@ class ControllerEndToEndTest(unittest.TestCase):
         )
         return controller, store, github, notifier
 
-    def test_controller_reports_delayed_slot_without_github_work(self):
+    def test_controller_processes_yesterday_before_today_deadline(self):
         with tempfile.TemporaryDirectory() as td:
             controller, store, github, notifier = self._controller(
                 td,
-                [],
-                now=lambda: dt.datetime(2026, 9, 4, 10, 0, tzinfo=UTC),
+                [[], []],
+                now=lambda: dt.datetime(2026, 9, 5, 10, 0, tzinfo=UTC),
             )
             result = controller.tick()
             self.assertEqual(result.exit_code, 0)
-            self.assertEqual(github.workflow_calls, 0)
-            self.assertEqual(github.run_calls, [])
-            self.assertEqual(notifier.calls, [])
-            self.assertFalse(pathlib.Path(store.path).exists())
+            self.assertEqual(github.workflow_calls, 2)
+            self.assertEqual(len(github.run_calls), 2)
+            self.assertEqual(len(github.dispatches), 1)
+            self.assertTrue(github.dispatches[0].startswith("2026-09-04."))
+            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:alerts"])
+            self.assertIn("recovery-start", notifier.calls[0][1])
+            self.assertIn("2026-09-04", store.load()["days"])
+            self.assertNotIn("2026-09-05", store.load()["days"])
+
+    def test_controller_revisits_older_no_dispatch_day_without_duplicate_due_work(self):
+        runs = [
+            run(401, conclusion="failure", created="2026-09-04T04:17:01Z"),
+            run(402, conclusion="failure", created="2026-09-05T04:17:01Z"),
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            controller, store, github, notifier = self._controller(
+                td,
+                [runs, runs],
+                now=lambda: dt.datetime(2026, 9, 5, 17, 20, tzinfo=UTC),
+            )
+            state = store.load()
+            store.ensure_day(state, "2026-09-04")
+            store.save(state)
+
+            result = controller.tick()
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(len(github.dispatches), 2)
+            self.assertTrue(github.dispatches[0].startswith("2026-09-04."))
+            self.assertTrue(github.dispatches[1].startswith("2026-09-05."))
+            self.assertEqual(len(notifier.calls), 2)
+            self.assertEqual(
+                {day for day in store.load()["days"]},
+                {"2026-09-04", "2026-09-05"},
+            )
 
     def test_controller_leaves_active_scheduled_run_alone_and_alerts_once(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1054,6 +1169,42 @@ class ControllerEndToEndTest(unittest.TestCase):
             self.assertTrue(day["tombstone"])
             self.assertEqual(day["final_outcome"], "recovery-failed")
 
+    def test_failed_bound_recovery_prefers_newer_successful_production_run(self):
+        watchdog_id = "2026-09-04.0123456789abcdef0123456789abcdef"
+        recovery = run(
+            401,
+            event="workflow_dispatch",
+            conclusion="failure",
+            created="2026-09-04T17:30:00Z",
+        )
+        recovery["display_title"] = "EPG watchdog recovery " + watchdog_id
+        newer = run(402, event="push", created="2026-09-04T18:00:00Z")
+        with tempfile.TemporaryDirectory() as td:
+            archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
+            controller, store, github, notifier = self._controller(
+                td,
+                [recovery, newer],
+                now=lambda: dt.datetime(2026, 9, 4, 18, 10, tzinfo=UTC),
+            )
+            github.artifacts = [artifact_for(402)]
+            github.archive = archive
+            state = store.load()
+            record = store.ensure_day(state, "2026-09-04")
+            record["dispatch_attempted"] = True
+            record["dispatch_requested_at"] = "2026-09-04T17:20:00Z"
+            record["watchdog_id"] = watchdog_id
+            store.save(state)
+
+            result = controller.tick()
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual([target for target, _ in notifier.calls], ["ntfy:reports"])
+            self.assertIn("EPG healthy", notifier.calls[0][1])
+            day = store.load()["days"]["2026-09-04"]
+            self.assertTrue(day["tombstone"])
+            self.assertEqual(day["final_outcome"], "healthy")
+            self.assertIn("runs/402", notifier.calls[0][1])
+
     def test_newer_success_after_dispatch_satisfies_recovery_day(self):
         watchdog_id = "2026-09-04.0123456789abcdef0123456789abcdef"
         newer = run(
@@ -1084,6 +1235,45 @@ class ControllerEndToEndTest(unittest.TestCase):
             day = store.load()["days"]["2026-09-04"]
             self.assertTrue(day["tombstone"])
             self.assertEqual(day["final_outcome"], "healthy")
+
+    def test_artifact_timeout_queues_alert_and_preserves_dispatch_reservation(self):
+        watchdog_id = "2026-09-04.0123456789abcdef0123456789abcdef"
+        recovery = run(
+            414,
+            event="workflow_dispatch",
+            created="2026-09-04T17:30:00Z",
+        )
+        recovery["display_title"] = "EPG watchdog recovery " + watchdog_id
+
+        class ArtifactTimeoutGitHub(FakeGitHub):
+            def list_artifacts(self, run_id):
+                raise TickTimeoutError("artifact list timed out")
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            github = ArtifactTimeoutGitHub([recovery])
+            notifier = RecordingNotifier()
+            state = store.load()
+            record = store.ensure_day(state, "2026-09-04")
+            record["dispatch_attempted"] = True
+            record["dispatch_requested_at"] = "2026-09-04T17:20:00Z"
+            record["watchdog_id"] = watchdog_id
+            store.save(state)
+
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+            ).tick()
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(len(notifier.calls), 1)
+            self.assertEqual(notifier.calls[0][0], "ntfy:alerts")
+            self.assertIn("artifact-error", notifier.calls[0][1])
+            day = store.load()["days"]["2026-09-04"]
+            self.assertTrue(day["tombstone"])
+            self.assertTrue(day["dispatch_attempted"])
+            self.assertEqual(day["watchdog_id"], watchdog_id)
+            self.assertEqual(day["final_outcome"], "artifact-error")
 
     def test_terminal_alert_remains_pending_if_send_commit_crashes(self):
         class CrashStore(StateStore):
@@ -1137,7 +1327,7 @@ class ControllerEndToEndTest(unittest.TestCase):
             self.assertEqual(notifier.calls, [])
             self.assertFalse(store.load()["days"]["2026-09-04"]["terminal"])
 
-    def test_expired_unresolved_recovery_avoids_github_reads_and_tombstones_after_alert(self):
+    def test_expired_unresolved_recovery_avoids_github_reads_when_newest_due_is_tombstoned(self):
         with tempfile.TemporaryDirectory() as td:
             controller, store, github, notifier = self._controller(
                 td, [], now=lambda: dt.datetime(2026, 9, 19, 10, 0, tzinfo=UTC)
@@ -1148,6 +1338,11 @@ class ControllerEndToEndTest(unittest.TestCase):
             record["dispatch_requested_at"] = "2026-09-04T09:00:00Z"
             record["watchdog_id"] = "2026-09-04.0123456789abcdef0123456789abcdef"
             store.save(state)
+            newest = store.ensure_day(state, "2026-09-18")
+            newest["terminal"] = True
+            newest["final_outcome"] = "already-complete"
+            store.save(state)
+            store.finalize_day(state, "2026-09-18")
 
             result = controller.tick()
 
@@ -1159,6 +1354,7 @@ class ControllerEndToEndTest(unittest.TestCase):
             final = store.load()["days"]["2026-09-04"]
             self.assertTrue(final["tombstone"])
             self.assertEqual(final["final_outcome"], "expired-unresolved")
+            self.assertTrue(store.load()["days"]["2026-09-18"]["tombstone"])
 
     def test_duplicate_recovery_identity_is_terminal_and_distinct_from_schema_error(self):
         watchdog_id = "2026-09-04.0123456789abcdef0123456789abcdef"

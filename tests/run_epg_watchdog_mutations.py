@@ -30,11 +30,11 @@ MUTATIONS = (
     ),
     (
         "move-reservation-after-dispatch",
-        """                        self.store.reserve_dispatch(
-                            state, due_day, _iso(now), watchdog_id
-                        )
+        """                self.store.reserve_dispatch(
+                    state, day, _iso(now), watchdog_id
+                )
 """,
-        """                        # MUTATION: reservation omitted before dispatch
+        """                # MUTATION: reservation omitted before dispatch
 """,
         "tests.test_epg_github_watchdog.ControllerEndToEndTest.test_dispatch_sees_durable_reservation_before_api_call",
     ),
