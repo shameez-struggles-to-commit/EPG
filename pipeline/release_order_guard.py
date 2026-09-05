@@ -133,33 +133,22 @@ def check_release_order(repository, workflow, run_id, client):
     current_key = _run_key(current)
 
     runs_path = "/repos/%s/actions/workflows/%d/runs" % (repository, workflow_id)
-    response = client.get(runs_path, params={"branch": "main", "per_page": 100})
+    response = client.get(
+        runs_path,
+        params={"branch": "main", "created": ">=" + current["created_at"], "per_page": 100},
+    )
     if not isinstance(response, dict):
         raise ReleaseOrderError("run list is not an object")
     total_count = response.get("total_count")
     runs = response.get("workflow_runs")
     if isinstance(total_count, bool) or not isinstance(total_count, int) or total_count < 0:
         raise ReleaseOrderError("invalid run-list total_count")
-    if total_count > 200:
-        raise ReleaseOrderError("run list exceeds bounded 200-run limit")
-    next_page = _next_page(client)
-    expected_next_page = 2 if total_count > 100 else None
-    if next_page is not None and next_page != expected_next_page:
-        raise ReleaseOrderError("run-list next page/count inconsistency")
-    if not isinstance(runs, list) or len(runs) != min(total_count, 100):
-        raise ReleaseOrderError("run list is incomplete")
     if total_count > 100:
-        second = client.get(runs_path, params={"branch": "main", "per_page": 100, "page": 2})
-        if _next_page(client) is not None:
-            raise ReleaseOrderError("run-list next page exceeds bounded read")
-        if not isinstance(second, dict):
-            raise ReleaseOrderError("run list page is not an object")
-        if second.get("total_count") != total_count:
-            raise ReleaseOrderError("run-list page count mismatch")
-        second_runs = second.get("workflow_runs")
-        if not isinstance(second_runs, list) or len(runs) + len(second_runs) != total_count:
-            raise ReleaseOrderError("run list count is incomplete")
-        runs = runs + second_runs
+        raise ReleaseOrderError("run list exceeds bounded 100-run limit")
+    if _next_page(client) is not None:
+        raise ReleaseOrderError("run-list pagination exceeds bounded read")
+    if not isinstance(runs, list) or len(runs) != total_count:
+        raise ReleaseOrderError("run list is incomplete")
     saw_current = False
     for run in runs:
         if not isinstance(run, dict):
