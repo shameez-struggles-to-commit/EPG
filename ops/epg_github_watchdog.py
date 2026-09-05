@@ -1205,15 +1205,7 @@ class WatchdogController:
         record["terminal"] = True
         record["final_outcome"] = "healthy" if diagnostic.healthy else "degraded"
         url = self._run_url(run)
-        if diagnostic.healthy:
-            self._queue(
-                state, day, "report", REPORT_TARGET,
-                "event=%s:report EPG healthy day=%s run=%s scrapers=%d" % (
-                    day, day, url, diagnostic.scraper_count
-                ),
-                save=False,
-            )
-        else:
+        if not diagnostic.healthy:
             self._queue(
                 state, day, "report", REPORT_TARGET,
                 "event=%s:report EPG production passed day=%s run=%s degraded=%d" % (
