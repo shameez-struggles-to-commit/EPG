@@ -18,6 +18,7 @@ from urllib.parse import urlencode
 
 
 UTC = _dt.timezone.utc
+DEGRADED_NOTICE_INTERVAL_DAYS = 7
 ACTIVE_STATUSES = frozenset({
     "queued", "requested", "pending", "waiting", "in_progress",
 })
@@ -1097,6 +1098,18 @@ class WatchdogController:
                     if not final:
                         self._check_budget()
                     message = record["pending_messages"][key]
+                    if self._is_legacy_degraded_report(key, message):
+                        record["pending_messages"].pop(key, None)
+                        self.store.save(state)
+                        continue
+                    degraded_kind = self._degraded_notice_kind(key)
+                    if degraded_kind is not None:
+                        if degraded_kind == "degraded-alert":
+                            message = dict(message)
+                            message["body"] = self._legacy_degraded_notice(message["body"])
+                        attempt_day = self._now().date().isoformat()
+                        if not self._claim_degraded_notice(state, day, key, attempt_day):
+                            continue
                     try:
                         self.notifier.send(message["target"], message["body"])
                     except NotificationError as exc:
@@ -1106,7 +1119,8 @@ class WatchdogController:
                                 return False
                             return self._pending(state, final=True)
                         return False
-                    self.store.mark_message_sent(state, day, key)
+                    if degraded_kind is None:
+                        self.store.mark_message_sent(state, day, key)
                     if final:
                         return True
             return True
@@ -1160,6 +1174,117 @@ class WatchdogController:
         )
         self.store.save(state)
 
+    @staticmethod
+    def _degraded_notice_identity(key):
+        if not isinstance(key, str):
+            return None
+        match = re.fullmatch(
+            r"(\d{4}-\d{2}-\d{2}):(degraded-alert|degraded-summary)", key
+        )
+        if match is None:
+            return None
+        try:
+            notice_day = _dt.date.fromisoformat(match.group(1))
+        except ValueError:
+            return None
+        return notice_day, match.group(2)
+
+    @classmethod
+    def _degraded_notice_kind(cls, key):
+        identity = cls._degraded_notice_identity(key)
+        return identity[1] if identity is not None else None
+
+    @staticmethod
+    def _is_legacy_degraded_report(key, message):
+        if not isinstance(key, str) or message.get("target") != REPORT_TARGET:
+            return False
+        match = re.fullmatch(r"(\d{4}-\d{2}-\d{2}):report", key)
+        if match is None:
+            return False
+        try:
+            _dt.date.fromisoformat(match.group(1))
+        except ValueError:
+            return False
+        return True
+
+    def _degraded_notice_was_attempted_recently(self, state, notification_day):
+        current_day = _dt.date.fromisoformat(notification_day)
+        for record in state["days"].values():
+            for key in record.get("alerts_sent", {}):
+                identity = self._degraded_notice_identity(key)
+                if identity is None:
+                    continue
+                notice_day, _kind = identity
+                age = (current_day - notice_day).days
+                if 0 <= age < DEGRADED_NOTICE_INTERVAL_DAYS:
+                    return True
+        return False
+
+    def _pending_degraded_notice_exists(self, state):
+        return any(
+            self._degraded_notice_identity(key) is not None
+            for record in state["days"].values()
+            for key in record.get("pending_messages", {})
+        )
+
+    def _degraded_notice_is_recent(self, state, notification_day):
+        return (
+            self._degraded_notice_was_attempted_recently(state, notification_day)
+            or self._pending_degraded_notice_exists(state)
+        )
+
+    def _claim_degraded_notice(self, state, day, pending_key, attempt_day):
+        record = self.store.ensure_day(state, day)
+        record["pending_messages"].pop(pending_key, None)
+        if self._degraded_notice_was_attempted_recently(state, attempt_day):
+            self.store.save(state)
+            return False
+        record["alerts_sent"]["%s:degraded-summary" % attempt_day] = True
+        self.store.save(state)
+        return True
+
+    @staticmethod
+    def _format_degraded_notice(degraded):
+        count = len(degraded)
+        issue_label = "one source issue" if count == 1 else "%d source issues" % count
+        details = "\n".join(
+            "%s returned %d rows." % (name, degraded[name]["count"])
+            for name in sorted(degraded)
+        )
+        return (
+            "EPG update completed with %s.\n"
+            "The guide was published and passed its health checks.\n"
+            "%s\n"
+            "No action is required."
+        ) % (issue_label, details)
+
+    @classmethod
+    def _degraded_notice(cls, diagnostic):
+        return cls._format_degraded_notice(diagnostic.degraded)
+
+    @classmethod
+    def _legacy_degraded_notice(cls, body):
+        degraded = {}
+        marker = " scrapers="
+        if isinstance(body, str) and marker in body:
+            for item in body.split(marker, 1)[1].split(","):
+                name, separator, raw_count = item.rpartition("=")
+                if not separator or not name:
+                    continue
+                try:
+                    count = int(raw_count)
+                except ValueError:
+                    continue
+                if count >= 0:
+                    degraded[name] = {"count": count}
+        if degraded:
+            return cls._format_degraded_notice(degraded)
+        return (
+            "EPG update completed with a source issue.\n"
+            "The guide was published and passed its health checks.\n"
+            "No action is required."
+        )
+
     def _read_pending_diagnostic(self, state, day, record, run, now):
         now = self._now()
         pending = record["pending_diagnostic"]
@@ -1204,24 +1329,17 @@ class WatchdogController:
         record["pending_diagnostic"] = None
         record["terminal"] = True
         record["final_outcome"] = "healthy" if diagnostic.healthy else "degraded"
-        url = self._run_url(run)
         if not diagnostic.healthy:
-            self._queue(
-                state, day, "report", REPORT_TARGET,
-                "event=%s:report EPG production passed day=%s run=%s degraded=%d" % (
-                    day, day, url, len(diagnostic.degraded)
-                ),
-                save=False,
-            )
-            details = ",".join(
-                "%s=%d" % (name, diagnostic.degraded[name]["count"])
-                for name in sorted(diagnostic.degraded)
-            )
-            self._queue(
-                state, day, "degraded-alert", ALERT_TARGET,
-                "event=%s:degraded-alert day=%s scrapers=%s" % (day, day, details),
-                save=False,
-            )
+            notification_day = self._now().date().isoformat()
+            if not self._degraded_notice_is_recent(state, notification_day):
+                self.store.queue_message(
+                    state,
+                    day,
+                    "%s:degraded-summary" % notification_day,
+                    ALERT_TARGET,
+                    self._degraded_notice(diagnostic),
+                    save=False,
+                )
         self.store.save(state)
 
     def _production(self, state, day, record, run, now):

@@ -57,30 +57,16 @@ MUTATIONS = (
         "tests.test_epg_github_watchdog.ClassifierTest.test_recovery_binding_rejects_name_without_exact_display_title",
     ),
     (
-        "mark-notification-before-send",
-        """                    try:
-                        self.notifier.send(message["target"], message["body"])
-                    except NotificationError as exc:
-                        if getattr(exc, "timed_out", False):
-                            self._normal_network_stopped = True
-                            if final:
-                                return False
-                            return self._pending(state, final=True)
-                        return False
-                    self.store.mark_message_sent(state, day, key)
-""",
-        """                    self.store.mark_message_sent(state, day, key)
-                    try:
-                        self.notifier.send(message["target"], message["body"])
-                    except NotificationError as exc:
-                        if getattr(exc, "timed_out", False):
-                            self._normal_network_stopped = True
-                            if final:
-                                return False
-                            return self._pending(state, final=True)
-                        return False
-""",
-        "tests.test_epg_github_watchdog.ControllerEndToEndTest.test_ntfy_error_leaves_terminal_messages_for_the_next_tick",
+        "bypass-degraded-preclaim",
+        "if degraded_kind is not None:",
+        "if False and degraded_kind is not None:",
+        "tests.test_epg_github_watchdog.ControllerEndToEndTest.test_ntfy_error_does_not_retry_weekly_degraded_notice",
+    ),
+    (
+        "bypass-legacy-degraded-report-migration",
+        "if self._is_legacy_degraded_report(key, message):",
+        "if False and self._is_legacy_degraded_report(key, message):",
+        "tests.test_epg_github_watchdog.ControllerEndToEndTest.test_legacy_pending_degraded_messages_become_one_clear_attempt",
     ),
     (
         "restore-terminal-state-after-uncertain-dispatch",
@@ -166,6 +152,12 @@ MUTATIONS = (
                         )
 """,
         "tests.test_epg_github_watchdog.ControllerEndToEndTest.test_budget_expiring_during_reservation_does_not_block_later_dispatch",
+    ),
+    (
+        "use-enqueue-day-for-degraded-attempt",
+        "attempt_day = self._now().date().isoformat()",
+        'attempt_day = key.split(":", 1)[0]',
+        "tests.test_epg_github_watchdog.ControllerEndToEndTest.test_pending_degraded_notice_uses_attempt_day_and_blocks_same_tick_duplicate",
     ),
     (
         "extend-final-deadline-past-short-tick",
