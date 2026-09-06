@@ -45,6 +45,7 @@ from ops.epg_github_watchdog import (
     classify_day,
     default_day_record,
     main,
+    new_state,
 )
 
 
@@ -2369,7 +2370,7 @@ class ControllerEndToEndTest(unittest.TestCase):
             self.assertEqual(notifier.calls[0][1], "event=state-error state=unreadable")
             self.assertEqual(pathlib.Path(store.path).read_text(encoding="utf-8"), "{not-json")
 
-    def test_ntfy_error_leaves_terminal_messages_for_the_next_tick(self):
+    def test_ntfy_error_does_not_retry_weekly_degraded_notice(self):
         archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-degraded.zip").read_bytes()
         with tempfile.TemporaryDirectory() as td:
             controller, store, github, failing = self._controller(
@@ -2381,10 +2382,11 @@ class ControllerEndToEndTest(unittest.TestCase):
             github.archive = archive
             result = controller.tick()
             self.assertEqual(result.exit_code, 1)
-            pending = store.load()["days"]["2026-09-04"]["pending_messages"]
+            record = store.load()["days"]["2026-09-04"]
+            self.assertEqual(record["pending_messages"], {})
             self.assertEqual(
-                set(pending),
-                {"2026-09-04:report", "2026-09-04:degraded-alert"},
+                set(record["alerts_sent"]),
+                {"2026-09-04:degraded-summary"},
             )
             self.assertEqual(len(failing.calls), 1)
 
@@ -2398,11 +2400,44 @@ class ControllerEndToEndTest(unittest.TestCase):
             )
             result = retry_controller.tick()
             self.assertEqual(result.exit_code, 0)
-            self.assertEqual(
-                [target for target, _ in retry.calls],
-                ["ntfy:alerts", "ntfy:reports"],
-            )
+            self.assertEqual(retry.calls, [])
             self.assertTrue(store.load()["days"]["2026-09-04"]["tombstone"])
+
+    def test_failure_alert_still_retries_after_ntfy_error(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            record = store.ensure_day(state, "2026-09-04")
+            record["terminal"] = True
+            record["final_outcome"] = "recovery-failed"
+            store.queue_message(
+                state,
+                "2026-09-04",
+                "2026-09-04:recovery-failed",
+                "ntfy:alerts",
+                "failure body",
+            )
+
+            failing = RecordingNotifier(fail=True)
+            first = WatchdogController(
+                repository="acme/epg", github=FakeGitHub([]), notifier=failing, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            self.assertEqual(first.exit_code, 1)
+            self.assertIn(
+                "2026-09-04:recovery-failed",
+                store.load()["days"]["2026-09-04"]["pending_messages"],
+            )
+
+            retry = RecordingNotifier()
+            second = WatchdogController(
+                repository="acme/epg", github=FakeGitHub([]), notifier=retry, store=store,
+                now=lambda: dt.datetime(2026, 9, 4, 18, 1, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            self.assertEqual(second.exit_code, 0)
+            self.assertEqual(retry.calls, [("ntfy:alerts", "failure body")])
 
     def test_check_only_reports_exact_read_only_evidence_for_each_decision(self):
         cases = [
@@ -3022,7 +3057,7 @@ class ControllerEndToEndTest(unittest.TestCase):
             self.assertTrue(final["tombstone"])
             self.assertEqual(final["final_outcome"], "healthy")
 
-    def test_degraded_pending_diagnostic_sends_report_and_exact_degraded_alert(self):
+    def test_degraded_pending_diagnostic_sends_one_clear_alert(self):
         archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-degraded.zip").read_bytes()
         with tempfile.TemporaryDirectory() as td:
             store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
@@ -3035,14 +3070,280 @@ class ControllerEndToEndTest(unittest.TestCase):
             ).tick()
             final = store.load()["days"]["2026-09-04"]
             self.assertEqual(result.exit_code, 0)
-            self.assertEqual(
-                sorted(target for target, _ in notifier.calls),
-                ["ntfy:alerts", "ntfy:reports"],
-            )
-            self.assertIn("production passed", " ".join(message for _, message in notifier.calls))
-            self.assertIn("alpha=0", " ".join(message for _, message in notifier.calls))
+            self.assertEqual(len(notifier.calls), 1)
+            target, message = notifier.calls[0]
+            self.assertEqual(target, "ntfy:alerts")
+            self.assertNotIn("event=", message)
+            self.assertIn("EPG update completed with one source issue", message)
+            self.assertIn("alpha returned 0 rows", message)
+            self.assertIn("No action is required", message)
             self.assertTrue(final["tombstone"])
             self.assertEqual(final["final_outcome"], "degraded")
+
+    def test_degraded_alert_is_silent_within_seven_days_of_prior_alert(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-degraded.zip").read_bytes()
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            prior = store.ensure_day(state, "2026-09-04")
+            prior["terminal"] = True
+            prior["final_outcome"] = "degraded"
+            prior["alerts_sent"]["2026-09-04:degraded-alert"] = True
+            store.save(state)
+            store.finalize_day(state, "2026-09-04")
+
+            github = FakeGitHub(
+                [run(708, created="2026-09-10T04:17:01Z")],
+                [artifact_for(708)],
+                archive,
+            )
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 10, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(notifier.calls, [])
+            final = store.load()["days"]["2026-09-10"]
+            self.assertTrue(final["tombstone"])
+            self.assertEqual(final["final_outcome"], "degraded")
+
+    def test_pending_degraded_notice_uses_attempt_day_and_blocks_same_tick_duplicate(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-degraded.zip").read_bytes()
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            old = store.ensure_day(state, "2026-09-06")
+            old["terminal"] = True
+            old["final_outcome"] = "degraded"
+            store.queue_message(
+                state,
+                "2026-09-06",
+                "2026-09-06:degraded-summary",
+                "ntfy:alerts",
+                "clear degraded notice",
+                save=False,
+            )
+            current = store.ensure_day(state, "2026-09-13")
+            current["production_run_id"] = 713
+            current["production_run_attempt"] = 1
+            current["pending_diagnostic"] = pending_for(
+                713,
+                first="2026-09-13T17:00:00Z",
+                deadline="2026-09-20T17:00:00Z",
+            )
+            store.save(state)
+
+            github = FakeGitHub([], [artifact_for(713)], archive)
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 13, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(notifier.calls, [("ntfy:alerts", "clear degraded notice")])
+            all_keys = {
+                key
+                for record in store.load()["days"].values()
+                for key in record["alerts_sent"]
+            }
+            self.assertIn("2026-09-13:degraded-summary", all_keys)
+            self.assertNotIn("2026-09-06:degraded-summary", all_keys)
+
+    def test_legacy_pending_degraded_messages_become_one_clear_attempt(self):
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            old = store.ensure_day(state, "2026-09-06")
+            old["terminal"] = True
+            old["final_outcome"] = "degraded"
+            store.queue_message(
+                state,
+                "2026-09-06",
+                "2026-09-06:degraded-alert",
+                "ntfy:alerts",
+                "event=2026-09-06:degraded-alert day=2026-09-06 scrapers=alpha=0",
+                save=False,
+            )
+            store.queue_message(
+                state,
+                "2026-09-06",
+                "2026-09-06:report",
+                "ntfy:reports",
+                "event=2026-09-06:report EPG production passed",
+                save=False,
+            )
+            current = store.ensure_day(state, "2026-09-13")
+            current["terminal"] = True
+            current["final_outcome"] = "healthy"
+            store.save(state)
+            store.finalize_day(state, "2026-09-13")
+
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=FakeGitHub([]), notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 13, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(len(notifier.calls), 1)
+            target, message = notifier.calls[0]
+            self.assertEqual(target, "ntfy:alerts")
+            self.assertNotIn("event=", message)
+            self.assertIn("EPG update completed with one source issue", message)
+            self.assertIn("alpha returned 0 rows", message)
+            self.assertIn("No action is required", message)
+            all_keys = {
+                key
+                for record in store.load()["days"].values()
+                for key in record["alerts_sent"]
+            }
+            self.assertIn("2026-09-13:degraded-summary", all_keys)
+
+    def test_successful_degraded_send_is_not_retried_after_later_state_save_failure(self):
+        class PostSendFailStore(StateStore):
+            fail_after_send = False
+            failed = False
+
+            def save(self, state):
+                if self.fail_after_send and not self.failed:
+                    self.failed = True
+                    raise OSError("simulated post-send state write failure")
+                return super().save(state)
+
+        class StoreAwareNotifier(RecordingNotifier):
+            def __init__(self, store):
+                super().__init__()
+                self.store = store
+
+            def send(self, target, message):
+                result = super().send(target, message)
+                self.store.fail_after_send = True
+                return result
+
+        with tempfile.TemporaryDirectory() as td:
+            store = PostSendFailStore(
+                pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock"
+            )
+            state = store.load()
+            old = store.ensure_day(state, "2026-09-06")
+            old["terminal"] = True
+            old["final_outcome"] = "degraded"
+            store.queue_message(
+                state,
+                "2026-09-06",
+                "2026-09-06:degraded-summary",
+                "ntfy:alerts",
+                "clear degraded notice",
+                save=False,
+            )
+            current = store.ensure_day(state, "2026-09-13")
+            current["terminal"] = True
+            current["final_outcome"] = "healthy"
+            store.save(state)
+            store.finalize_day(state, "2026-09-13")
+
+            first_notifier = StoreAwareNotifier(store)
+            first = WatchdogController(
+                repository="acme/epg", github=FakeGitHub([]), notifier=first_notifier,
+                store=store,
+                now=lambda: dt.datetime(2026, 9, 13, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            self.assertEqual(first.exit_code, 1)
+            self.assertEqual(len(first_notifier.calls), 1)
+
+            store.fail_after_send = False
+            retry_notifier = RecordingNotifier()
+            second = WatchdogController(
+                repository="acme/epg", github=FakeGitHub([]), notifier=retry_notifier,
+                store=store,
+                now=lambda: dt.datetime(2026, 9, 13, 18, 1, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+            self.assertEqual(second.exit_code, 0)
+            self.assertEqual(retry_notifier.calls, [])
+
+    def test_multiple_delayed_degraded_diagnostics_send_one_notice_for_processing_day(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-degraded.zip").read_bytes()
+
+        class ArtifactByRunGitHub(FakeGitHub):
+            def list_artifacts(self, run_id):
+                return [artifact_for(run_id)]
+
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            for day, run_id in (("2026-09-01", 701), ("2026-09-10", 710)):
+                record = store.ensure_day(state, day)
+                record["production_run_id"] = run_id
+                record["production_run_attempt"] = 1
+                record["pending_diagnostic"] = pending_for(
+                    run_id,
+                    first="2026-09-10T17:00:00Z",
+                    deadline="2026-09-18T17:00:00Z",
+                )
+            store.save(state)
+
+            github = ArtifactByRunGitHub([], archive=archive)
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 10, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(len(notifier.calls), 1)
+            self.assertEqual(notifier.calls[0][0], "ntfy:alerts")
+            all_keys = {
+                key
+                for record in store.load()["days"].values()
+                for key in record["alerts_sent"]
+            }
+            self.assertIn("2026-09-10:degraded-summary", all_keys)
+
+    def test_late_degraded_notice_uses_processing_day_for_weekly_boundary(self):
+        controller = object.__new__(WatchdogController)
+        state = new_state()
+        record = StateStore.ensure_day(state, "2026-09-04")
+        record["alerts_sent"]["2026-09-10:degraded-summary"] = True
+
+        self.assertTrue(controller._degraded_notice_is_recent(state, "2026-09-11"))
+        self.assertFalse(controller._degraded_notice_is_recent(state, "2026-09-17"))
+
+    def test_degraded_alert_is_sent_seven_days_after_prior_alert(self):
+        archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-degraded.zip").read_bytes()
+        with tempfile.TemporaryDirectory() as td:
+            store = StateStore(pathlib.Path(td) / "state.json", pathlib.Path(td) / "watchdog.lock")
+            state = store.load()
+            prior = store.ensure_day(state, "2026-09-04")
+            prior["terminal"] = True
+            prior["final_outcome"] = "degraded"
+            prior["alerts_sent"]["2026-09-04:degraded-alert"] = True
+            store.save(state)
+            store.finalize_day(state, "2026-09-04")
+
+            github = FakeGitHub(
+                [run(709, created="2026-09-11T04:17:01Z")],
+                [artifact_for(709)],
+                archive,
+            )
+            notifier = RecordingNotifier()
+            result = WatchdogController(
+                repository="acme/epg", github=github, notifier=notifier, store=store,
+                now=lambda: dt.datetime(2026, 9, 11, 18, 0, tzinfo=UTC),
+                monotonic=lambda: 0.0,
+            ).tick()
+
+            self.assertEqual(result.exit_code, 0)
+            self.assertEqual(len(notifier.calls), 1)
+            self.assertEqual(notifier.calls[0][0], "ntfy:alerts")
 
     def test_artifact_expiry_shortens_pending_deadline_before_download(self):
         archive = (ROOT / "tests/fixtures/epg_watchdog/diagnostics-healthy.zip").read_bytes()
