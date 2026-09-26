@@ -42,6 +42,26 @@ class ProviderHttpsTest(unittest.TestCase):
             with self.subTest(target=url), self.assertRaises(ValueError):
                 handler.redirect_request(old, None, 301, 'Moved', {}, url)
 
+    def test_cross_origin_path_rejects_embedded_and_encoded_credentials(self):
+        old = Request('https://panel.example/xmltv.php?username=alice&password=private')
+        handler = provider_http.SafeRedirectHandler(allow_cross_origin_guide=True)
+        for path in ('/files/private.xml', '/files/preprivatepost.xml',
+                     '/files/%70rivate.xml', '/files/%2570rivate.xml',
+                     '/files/ali%63e.xml'):
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, '^Unsafe HTTPS metadata redirect$'):
+                handler.redirect_request(old, None, 302, 'Moved', {}, 'https://guide.example' + path)
+
+    def test_cross_origin_second_hop_retains_original_secrets_after_query_loss(self):
+        handler = provider_http.SafeRedirectHandler(allow_cross_origin_guide=True)
+        initial = Request('https://panel.example/xmltv.php?username=alice&password=private')
+        first = handler.redirect_request(initial, None, 302, 'Moved', {}, 'https://guide.example/guide.xml')
+        with self.assertRaisesRegex(ValueError, '^Unsafe HTTPS metadata redirect$'):
+            handler.redirect_request(first, None, 302, 'Moved', {}, 'https://cdn.example/private.xml')
+        second = handler.redirect_request(first, None, 302, 'Moved', {}, 'https://cdn.example/guide.xml')
+        self.assertEqual('https://cdn.example/guide.xml', second.full_url)
+        with self.assertRaisesRegex(ValueError, '^Unsafe HTTPS metadata redirect$'):
+            handler.redirect_request(second, None, 302, 'Moved', {}, 'https://files.example/alice.xml')
+
     def test_cross_origin_metadata_redirect_is_rejected(self):
         old = Request('https://panel.example/player_api.php?username=alice&password=private')
         with self.assertRaises(ValueError):
@@ -75,7 +95,7 @@ class ProviderHttpsTest(unittest.TestCase):
         self.assertEqual([False, True], [call.kwargs['allow_cross_origin_guide'] for call in fetch.call_args_list])
 
     def test_playlist_uses_enriched_category_without_network(self):
-        with tempfile.TemporaryDirectory(dir='/Users/shameez/.hermes/cache/scratch') as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             streams = os.path.join(tmp, 'streams.json')
             auth = os.path.join(tmp, 'auth.json')
             output = os.path.join(tmp, 'out.m3u')

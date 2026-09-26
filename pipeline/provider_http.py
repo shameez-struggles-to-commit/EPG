@@ -47,17 +47,33 @@ class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
         new = _parts(newurl)
         old_origin = (old.hostname.lower(), old.port or 443)
         new_origin = (new.hostname.lower(), new.port or 443)
+        credentials = urllib.parse.parse_qs(old.query)
+        secrets = set(getattr(req, '_provider_redirect_secrets', ()))
+        secrets.update(value for key in ('username', 'password')
+                       for value in credentials.get(key, ()) if value)
         if old_origin != new_origin:
-            credentials = urllib.parse.parse_qs(old.query)
-            secret_parts = {value for key in ('username', 'password')
-                            for value in credentials.get(key, ()) if value}
-            path_parts = {urllib.parse.unquote(part) for part in new.path.split('/')}
+            # Decode the entire path, not individual segments: credentials may be
+            # embedded in filenames or split by encoded delimiters. Repeated
+            # encoding must not conceal a credential from this check.
+            path = new.path
+            unsafe_path = False
+            while True:
+                if any(secret in path for secret in secrets):
+                    unsafe_path = True
+                    break
+                decoded = urllib.parse.unquote(path)
+                if decoded == path:
+                    break
+                path = decoded
             if (not self.allow_cross_origin_guide or new.query or new.fragment
-                    or secret_parts.intersection(path_parts)):
+                    or unsafe_path):
                 raise ValueError('Unsafe HTTPS metadata redirect')
         # A fresh request cannot inherit Authorization, Cookie or custom headers.
         clean = urllib.request.Request(newurl, headers=UA)
-        return super().redirect_request(clean, fp, code, msg, headers, newurl)
+        redirected = super().redirect_request(clean, fp, code, msg, headers, newurl)
+        if redirected is not None:
+            setattr(redirected, '_provider_redirect_secrets', frozenset(secrets))
+        return redirected
 
 
 def fetch(url, timeout=180, *, allow_cross_origin_guide=False):
