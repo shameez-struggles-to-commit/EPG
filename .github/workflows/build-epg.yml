@@ -118,7 +118,7 @@ jobs:
             "$@" & FETCH_PID[$!]=$name; FETCH_REQ[$name]=$req
           }
           run_fetch skyhawk   1 python3 pipeline/fetch_skyhawk.py data/streams.json data/skyhawk.xml --days 2
-          run_fetch dstv      1 python3 pipeline/fetch_dstv.py data/dstv.xml --days 2
+          run_fetch dstv      1 python3 pipeline/fetch_dstv.py data/dstv.xml
           run_fetch epgone    0 python3 pipeline/fetch_epgone.py data/epgone_cis.xml data/streams.json
           run_fetch allente   1 python3 pipeline/fetch_allente.py data/allente.xml --days 2
           run_fetch teamfix   1 python3 pipeline/fetch_teamfixtures.py data/streams.json data/teamfixtures.xml data/teams_claim.json data/teams_status.json
