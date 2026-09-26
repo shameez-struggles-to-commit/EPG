@@ -86,6 +86,17 @@ class MeasuredCoverageTest(unittest.TestCase):
         self.assertNotIn('xtream:1', json.dumps(public))
         self.assertEqual(0, public['per_country']['CA']['covered'])
 
+    def test_raw_name_metadata_is_not_reported_as_channel_data(self):
+        self._write('streams.json', [{'stream_id': 9, 'name': '__raw_names__', 'cat_name': 'UK | General'}])
+        self._write('mapping.json', {})
+        self._write('sources.json', [{'source': 'sample'}])
+        self._write('index.json', {'sample': {'sky showcase': ['hd', 'base'],
+            '__raw_names__': {'sky showcase hd': ['hd'], 'sky showcase': ['base']}}})
+        guide(self.root / 'guide.xml.gz', [], [])
+        public, _ = self.run_report()
+        self.assertEqual([], public['uncovered_with_hits'])
+        self.assertEqual(1, public['per_source']['sample']['indexed_channels'])
+
     def test_empty_guide_does_not_turn_candidate_into_coverage(self):
         guide(self.root / 'guide.xml.gz', [], [])
         public, private = self.run_report()

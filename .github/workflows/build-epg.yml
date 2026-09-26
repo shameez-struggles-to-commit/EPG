@@ -263,10 +263,11 @@ jobs:
                   failures.append(f'{label}: unreadable ({e})')
           idx = json.load(open(os.path.join(data, 'sources_index.json')))
           for s in REQUIRED_SOURCES:
-              if s not in idx or not idx[s]:
+              names = {k: v for k, v in idx.get(s, {}).items() if k != '__raw_names__'}
+              if not names:
                   failures.append(f'source index missing: {s}')
               else:
-                  print(f'OK source index: {s} ({len(idx[s])} names)')
+                  print(f'OK source index: {s} ({len(names)} names)')
           if failures:
               print('\n'.join('FAIL ' + f for f in failures))
               sys.exit(1)
