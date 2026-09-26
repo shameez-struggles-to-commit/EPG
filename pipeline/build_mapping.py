@@ -281,6 +281,12 @@ def extract_callsign(name):
     return matches[-1].lower() if matches else None
 
 
+def extract_full_subchannel(name):
+    """Only an explicit station-DT<number> label identifies that subfeed."""
+    m = re.search(r'\b([KW][A-Z]{2,3}-DT\d+)\b', name or '', re.I)
+    return m.group(1).lower() if m else None
+
+
 def canonical_id(stream):
     eid = (stream.get('epg_channel_id') or '').strip()
     if is_real_epg_id(eid):
@@ -609,7 +615,10 @@ def main():
     provider_programme_names = set()
     if args.provider_index:
         pidx = json.load(open(args.provider_index))
-        prov_by_name = {norm(dn): cid for cid, dn in pidx.get('ids', {}).items() if cid}
+        prov_by_name = defaultdict(set)
+        for cid, dn in pidx.get('ids', {}).items():
+            if cid and norm(dn):
+                prov_by_name[norm(dn)].add(cid)
         provider_programme_names = {norm(dn) for dn in pidx.get('names_with_progs', []) if dn}
 
     mapping = {}
@@ -655,12 +664,13 @@ def main():
         allowed_eshare = {f'epgshare01:{f}' for f in COUNTRY_SOURCES.get(cc, [])}
 
         cands = []
+        ambiguous_name_sources = set()
 
         # rescued channels: ONLY the dedicated source, exact match, then skip
         # all other candidate paths (pk/alias/callsign/provider/fuzzy).
         if rescue_src:
             eids = src_idx[rescue_src].exact(name)
-            if eids:
+            if len(set(eids)) == 1:
                 cands.append((src_tier(rescue_src), rescue_src, eids[0], 'exact', 0.99))
                 stats[f'{rescue_src}:exact'] += 1
             if not cands:
@@ -705,13 +715,14 @@ def main():
                         continue
                     alias_diaspora = True
                 eids = src_idx[src].exact(alias)
-                if src == 'epg.pw' and len(eids) > 1:
-                    stats['epg.pw:ambiguous-alias'] += 1
-                    continue
                 if src == 'skyhawk':
                     terr = SKY_TERRITORY.get(cc)
                     if terr:
                         eids = [e for e in eids if isinstance(e, str) and e.startswith(terr + '#')]
+                if len(set(eids)) > 1:
+                    stats[f'{src}:ambiguous-alias'] += 1
+                    ambiguous_name_sources.add(src)
+                    continue
                 if eids:
                     alias_tier = src_tier(src) + (20 if alias_diaspora else 0)
                     cands.append((alias_tier, src, eids[0],
@@ -721,9 +732,19 @@ def main():
         # 1c. US call-sign match (very precise; US locals named "FOX: FL | Tampa | WTVT")
         cs = extract_callsign(name)
         if cs and cs in cs_index:
-            src, i = cs_index[cs][0]
-            cands.append((TIER['epgshare01'], src, i, 'callsign', 0.98))
-            stats['callsign'] += 1
+            full = extract_full_subchannel(name)
+            hits = cs_index[cs]
+            # Bare labels cannot identify DT2; multiple feeds are not resolved
+            # by file order, even if the first one happens to be the primary.
+            if full:
+                hits = [(src, i) for src, i in hits
+                        if re.match(re.escape(full) + r'(?:\.|$)', i, re.I)]
+            elif any(re.search(r'-DT\d+(?:\.|$)', i, re.I) for _, i in hits):
+                hits = []
+            if len(set(hits)) == 1:
+                src, i = hits[0]
+                cands.append((TIER['epgshare01'], src, i, 'callsign', 0.98))
+                stats['callsign'] += 1
 
         # 1c2. US affiliate resolution: "ABC: AL Birmingham ABC 33" carries no
         # call sign — resolve network+state+city -> call sign via the Wikipedia
@@ -734,8 +755,9 @@ def main():
             aff_css = resolve_affiliate(name, aff_idx)
             if aff_css:
                 for acs in aff_css:
-                    if acs in cs_index:
-                        src, i = cs_index[acs][0]
+                    hits = cs_index.get(acs, [])
+                    if len(set(hits)) == 1 and not re.search(r'-DT\d+(?:\.|$)', hits[0][1], re.I):
+                        src, i = hits[0]
                         cands.append((TIER['epgshare01'], src, i, 'affiliate', 0.98))
                         stats['affiliate'] += 1
                         break
@@ -760,12 +782,6 @@ def main():
             elif src == 'greek':
                 qname = greek_q(name)
             eids = src_idx[src].exact(qname)
-            if src == 'epg.pw' and len(eids) > 1:
-                # epg.pw is a worldwide aggregate with opaque numeric IDs;
-                # duplicate normalized names are different regions/variants.
-                # Never choose eids[0] by file order.
-                stats['epg.pw:ambiguous-exact'] += 1
-                continue
             if src == 'skyhawk':
                 # skyhawk source IDs carry a territory prefix ("GB#2075");
                 # keep only candidates whose territory matches this stream's
@@ -784,6 +800,10 @@ def main():
                 # norm() strips "tv", so "Real Madrid TV" would collide with the
                 # "Real Madrid" team feed — require the exact claimed name.
                 eids = [e for e in eids if e == qname]
+            if len(set(eids)) > 1:
+                stats[f'{src}:ambiguous-exact'] += 1
+                ambiguous_name_sources.add(src)
+                continue
             if eids:
                 # classify: 'exact' if the source is allowed for this stream
                 # through its normal gating, else 'diaspora' (exact-match
@@ -821,12 +841,12 @@ def main():
             stats['provider:epg-id-split'] += 1
         else:
             pn = norm(name)
-            if pn and pn in prov_by_name:
+            if pn and len(prov_by_name.get(pn, ())) == 1:
                 # AUDIT-4 F-03: provider-name fallback was NOT country-gated;
                 # 'FOX SPORTS 2' in ES/BR categories took foxsports2.us.
                 # Gate on the id's TLD suffix agreeing with the stream country
                 # (when both are known) before accepting the fallback.
-                cand_cid = prov_by_name[pn]
+                cand_cid = next(iter(prov_by_name[pn]))
                 tld = cand_cid.rsplit('.', 1)[-1].upper() if '.' in cand_cid else None
                 cc_norm = {'UK': 'GB', 'IRE': 'IE', 'SC': 'GB', 'USA': 'US'}.get(cc, cc)
                 tld_ok = (tld is None) or (tld == cc_norm) or (cc_norm is None)
@@ -838,6 +858,8 @@ def main():
 
         # fuzzy (lowest trust, appended last, country-gated)
         for src in name_sources:
+            if src in ambiguous_name_sources:
+                continue  # do not backdoor an ambiguous exact/alias via fuzzy
             # A missing country is not permission to search every regional
             # lineup. This was the Capital Radio -> Italian Radio Capital bug.
             if cc is None and (src in FETCHER_COUNTRIES or src.startswith('epgshare01')

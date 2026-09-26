@@ -69,6 +69,9 @@ def norm(s):
     s = ''.join(c for c in s if not unicodedata.combining(c))
     s = s.lower()
     s = s.replace('&', ' and ')  # before punctuation strip: "&TV" -> "and tv"
+    # A trailing plus names a different service (Movies24 vs Movies24+).
+    # Spelled-out "plus 1" and "+1" remain equivalent.
+    s = s.replace('+', ' plus ')
     s = QUALITY_RE.sub(' ', s)
     s = COUNTRY_SUFFIX_RE.sub(' ', s)
     s = re.sub(r'[^\w\s]', ' ', s)
@@ -281,10 +284,17 @@ class SourceIndex:
         for cn in cand:
             if cn == n:
                 continue  # exact handled separately
+            if ('plus' in toks) != ('plus' in cn.split()):
+                continue  # plus-marked services are not their base feed
+            if 'plus' in toks:
+                base, other = (set(toks) - {'plus', '1'},
+                               set(cn.split()) - {'plus', '1'})
+                if base != other and len(base & other) < 2:
+                    continue  # a shared '+1' is not evidence of the base feed
             if len(set(toks) & set(cn.split())) < min_common:
                 continue
             sc = dice_ratio(n, cn)
-            if sc >= threshold:
+            if sc >= threshold and len(set(self.by_name[cn])) == 1:
                 out.append((sc, cn, self.by_name[cn][0]))
         out.sort(key=lambda x: (-x[0], x[1]))
         return out[:limit]
