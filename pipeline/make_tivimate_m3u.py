@@ -45,30 +45,22 @@ def main():
     ap.add_argument('--collision-split', default=None)
     args = ap.parse_args()
 
-    streams = json.load(open(args.streams))
+    with open(args.streams) as stream_file:
+        streams = json.load(stream_file)
     if args.collision_split and os.path.exists(args.collision_split):
         # mapping.json carries the split indirectly; a flat name->cid file is
         # simpler — recompute for now (deterministic, same inputs).
         pass
     identity = build_identity_map(streams)
 
-    auth = json.load(open(args.auth))
+    with open(args.auth) as auth_file:
+        auth = json.load(auth_file)
     server = auth['server_info']['url']
     user = auth['user_info']['username']
     password = auth['user_info']['password']
 
-    # category names for group titles
-    cats = {}
-    try:
-        import urllib.request
-        url = (f'http://{server}/player_api.php?username={user}'
-               f'&password={password}&action=get_live_categories')
-        cats = {c['category_id']: c['category_name']
-                for c in json.load(urllib.request.urlopen(
-                    urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'}),
-                    timeout=60))}
-    except Exception as e:  # noqa: BLE001
-        print(f'[m3u] categories unavailable ({e}); continuing without groups')
+    # Category names are already enriched into streams.json by fetch_provider.
+    # No second authenticated provider request is needed.
 
     lines = ['#EXTM3U']
     n = 0
@@ -85,7 +77,7 @@ def main():
             f'tvg-id="{m3u_text(cid)}" '
             f'tvg-name="{m3u_text(name)}" '
             f'tvg-logo="{m3u_text(s.get("icon") or s.get("stream_icon") or "")}" '
-            f'group-title="{m3u_text(cats.get(s.get("category_id"), s.get("cat_name") or ""))}"'
+            f'group-title="{m3u_text(s.get("cat_name") or "")}"'
         )
         lines.append(f'#EXTINF:-1 {attrs},{m3u_text(name)}')
         lines.append(f'{scheme}://{server}/live/{eu}/{ep}/{m3u_url_text(sid)}.ts')

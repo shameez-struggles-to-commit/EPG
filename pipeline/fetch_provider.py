@@ -15,14 +15,17 @@ import json
 import os
 import sys
 import time
-import urllib.request
-
-UA = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36'}
+try:
+    from pipeline import provider_http
+except ModuleNotFoundError:  # direct script execution
+    import provider_http
 
 
 def fetch(url, timeout=180):
-    req = urllib.request.Request(url, headers=UA)
-    return urllib.request.urlopen(req, timeout=timeout).read()
+    return provider_http.fetch(
+        url, timeout=timeout,
+        allow_cross_origin_guide='/xmltv.php?' in url,
+    )
 
 
 def fetch_with_retry(url, timeout=180, attempts=3, delay=2, fetcher=fetch):
@@ -34,7 +37,7 @@ def fetch_with_retry(url, timeout=180, attempts=3, delay=2, fetcher=fetch):
             last_error = error
             if attempt < attempts:
                 print(
-                    f'Fetch attempt {attempt}/{attempts} failed: {error}; retrying',
+                    f'Fetch attempt {attempt}/{attempts} failed; retrying',
                     file=sys.stderr,
                 )
                 time.sleep(delay)
@@ -52,31 +55,25 @@ def main():
         print('FATAL: set IPTV_SERVER / IPTV_USER / IPTV_PASS', file=sys.stderr)
         sys.exit(2)
 
-    # Prefer https (the panel exposes https_port 443); fall back to http.
-    bases = []
-    proto = os.environ.get('IPTV_PROTO', '')
-    if proto:
-        bases.append(f'{proto}://{server}')
-    else:
-        bases.append(f'https://{server}')
-        bases.append(f'http://{server}')
-
-    auth = f'username={user}&password={passw}'
-    base = None
-    last_err = None
-    for b in bases:
-        try:
-            resp = json.loads(fetch(f'{b}/player_api.php?{auth}', timeout=30))
-            if resp.get('user_info', {}).get('auth') == 1:
-                base = b
-                print(f'Auth OK on {b}: status={resp["user_info"].get("status")} '
-                      f'tz={resp.get("server_info", {}).get("timezone")}')
-                break
-        except Exception as e:  # noqa: BLE001
-            last_err = e
-    if base is None:
-        print(f'AUTH FAILED on all bases (last error: {last_err})', file=sys.stderr)
+    # Only HTTPS is permitted for credential-bearing provider metadata.
+    try:
+        base_url = provider_http.metadata_url(
+            server, user, passw, 'player_api.php', proto=os.environ.get('IPTV_PROTO', '')
+        )
+    except ValueError as error:
+        print(f'FATAL: {error}', file=sys.stderr)
+        sys.exit(2)
+    auth = base_url.split('?', 1)[1]
+    base = f'https://{server}'
+    try:
+        resp = json.loads(fetch(base_url, timeout=30))
+        if resp.get('user_info', {}).get('auth') != 1:
+            raise ValueError('Authentication rejected')
+    except Exception:  # Never include credential-bearing URLs from transport errors.
+        print('AUTH FAILED over HTTPS', file=sys.stderr)
         sys.exit(1)
+    print(f'Auth OK on HTTPS: status={resp["user_info"].get("status")} '
+          f'tz={resp.get("server_info", {}).get("timezone")}')
 
     # Streams + categories
     streams = json.loads(fetch(f'{base}/player_api.php?{auth}&action=get_live_streams', timeout=120))
@@ -91,8 +88,8 @@ def main():
         provider_xml = fetch_with_retry(
             f'{base}/xmltv.php?{auth}', timeout=240, attempts=3, delay=5
         )
-    except Exception as e:  # noqa: BLE001
-        print(f'FATAL: provider XMLTV fetch failed after retries: {e}', file=sys.stderr)
+    except Exception:  # noqa: BLE001
+        print('FATAL: provider XMLTV fetch failed after retries', file=sys.stderr)
         sys.exit(1)
     if not provider_xml:
         print('FATAL: provider XMLTV response was empty', file=sys.stderr)
