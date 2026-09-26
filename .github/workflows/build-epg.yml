@@ -274,7 +274,10 @@ jobs:
           PYEOF
 
       - name: Build mapping (fallback cascade + country gating + call signs)
+        env:
+          EPG_IDENTITY_SEED: ${{ secrets.EPG_IDENTITY_SEED }}
         run: |
+          python3 -c 'from pipeline.stable_identity import require_seed; require_seed()'
           python3 pipeline/build_mapping.py \
             --streams data/streams.json \
             --sources-index data/sources_index.json \
@@ -392,6 +395,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Bind guide to stable identity version
+        env:
+          EPG_IDENTITY_SEED: ${{ secrets.EPG_IDENTITY_SEED }}
+        run: >-
+          python3 pipeline/release_manifest.py
+          --guide public/guide.xml.gz --out public/release.json
+          --revision "${{ github.sha }}" --run-id "${{ github.run_id }}"
+
       - name: Package Pages artifact
         run: |
           tar --dereference --hard-dereference --directory public \
@@ -448,8 +459,14 @@ jobs:
     needs: [build, deploy]
     steps:
       - name: Check deployed guide (fail on non-200/invalid)
+        env:
+          EXPECTED_RUN_ID: ${{ github.run_id }}
+          EXPECTED_REVISION: ${{ github.sha }}
         run: |
-          URL="https://${{ github.repository_owner }}.github.io/EPG/guide.xml.gz"
+          BASE="https://${{ github.repository_owner }}.github.io/EPG"
+          URL="$BASE/guide.xml.gz?release=$EXPECTED_RUN_ID"
+          curl --fail --silent --show-error --location --retry 3 \
+            "$BASE/release.json?release=$EXPECTED_RUN_ID" --output /tmp/release.json
           STATUS=$(curl -sIL -o /dev/null -w "%{http_code}" "$URL")
           SIZE=$(curl -sL -o /tmp/guide.gz -w "%{size_download}" "$URL")
           echo "Guide URL: $URL"
@@ -458,7 +475,14 @@ jobs:
           if [ "$STATUS" != "200" ]; then echo "FAIL: HTTP $STATUS (expected 200)"; exit 1; fi
           if [ "$SIZE" -lt 1000000 ]; then echo "FAIL: guide implausibly small ($SIZE bytes)"; exit 1; fi
           python3 - <<'PYEOF'
-          import gzip, re, sys, datetime
+          import gzip, re, sys, datetime, hashlib, json, os
+          from pathlib import Path
+          release = json.loads(Path('/tmp/release.json').read_text())
+          if (release.get('schema') != 1
+                  or release.get('run_id') != os.environ['EXPECTED_RUN_ID']
+                  or release.get('revision') != os.environ['EXPECTED_REVISION']
+                  or release['guide_sha256'] != hashlib.sha256(Path('/tmp/guide.gz').read_bytes()).hexdigest()):
+              raise SystemExit('FAIL: public release does not match this build')
           d = gzip.open('/tmp/guide.gz','rt',errors='ignore').read()
           chans = len(re.findall(r'<channel ', d))
           progs = len(re.findall(r'<programme', d))
