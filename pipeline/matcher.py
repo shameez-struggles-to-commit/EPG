@@ -243,14 +243,17 @@ class SourceIndex:
 
     def __init__(self):
         self.by_name = defaultdict(list)   # norm(display-name) -> [channel_id, ...]
+        self.raw_names = defaultdict(list)  # casefolded display-name -> [channel_id, ...]
         self._token_index = defaultdict(set)  # token -> {norm(display-name), ...}
         self._size = 0
 
-    def add(self, display_name, channel_id):
+    def add(self, display_name, channel_id, raw=True):
         n = norm(display_name)
         if not n or not channel_id:
             return
         self.by_name[n].append(channel_id)
+        if raw:
+            self.raw_names[display_name.strip().casefold()].append(channel_id)
         for t in n.split():
             self._token_index[t].add(n)
         self._size += 1

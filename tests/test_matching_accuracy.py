@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from pipeline.matcher import SourceIndex, norm
+from pipeline.fetch_sources import build_index
 from pipeline.build_pipeline import _is_placeholder_title, material_title_conflict
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +61,46 @@ class MatchingAccuracyTests(unittest.TestCase):
         self.assertEqual(candidates(result, '1'), [])
         self.assertEqual(candidates(result, '2'), [])
 
+    def test_unique_raw_name_resolves_normalized_hd_collision_from_xml(self):
+        xml = self.tmp_path / 'source.xml'
+        xml.write_text('<tv><channel id="hd"><display-name>Sky Showcase HD</display-name></channel>'
+                       '<channel id="base"><display-name>Sky Showcase</display-name></channel></tv>')
+        idx = build_index(str(xml))
+        self.assertEqual(idx.raw_names['sky showcase'], ['base'])
+        source = dict(idx.by_name)
+        source['__raw_names__'] = idx.raw_names
+        for order in (source[norm('Sky Showcase')], list(reversed(source[norm('Sky Showcase')]))):
+            source[norm('Sky Showcase')] = order
+            result = mapping(self.tmp_path, [stream('Sky Showcase', country='DE')],
+                             {'epgshare01:DE1': source})
+            self.assertEqual([(c['source_id'], c['method']) for c in candidates(result)],
+                             [('base', 'exact')])
+            hd_result = mapping(self.tmp_path, [stream('Sky Showcase HD', country='DE')],
+                                {'epgshare01:DE1': source})
+            self.assertEqual([(c['source_id'], c['method']) for c in candidates(hd_result)],
+                             [('hd', 'exact')])
+
+    def test_transliterated_lookup_is_not_literal_raw_identity(self):
+        xml = self.tmp_path / 'greek.xml'
+        xml.write_text('<tv><channel id="greek"><display-name>Σπορ</display-name></channel></tv>')
+        idx = build_index(str(xml), greek_translit=True)
+        self.assertIn('σπορ', idx.raw_names)
+        self.assertNotIn('spor', idx.raw_names)
+
+    def test_raw_identity_does_not_guess_hd_or_sd_when_only_variants_exist(self):
+        source = {norm('Colors'): ['colors-hd', 'colors-sd'],
+                  '__raw_names__': {'colors hd': ['colors-hd'], 'colors sd': ['colors-sd']}}
+        result = mapping(self.tmp_path, [stream('Colors', country='IN')],
+                         {'epgshare01:IN1': source})
+        self.assertEqual(candidates(result), [])
+
+    def test_duplicate_raw_identity_remains_rejected(self):
+        source = {norm('Raj TV'): ['raj-one', 'raj-two'],
+                  '__raw_names__': {'raj tv': ['raj-one', 'raj-two']}}
+        result = mapping(self.tmp_path, [stream('Raj TV', country='IN')],
+                         {'epgshare01:IN1': source})
+        self.assertEqual(candidates(result), [])
+
     def test_provider_name_bucket_does_not_pick_last_id(self):
         (self.tmp_path / 'provider_index.json').write_text(json.dumps({
             'ids': {'alpha.gb': 'Alpha TV', 'beta.gb': 'Alpha TV'},
@@ -93,6 +134,16 @@ class MatchingAccuracyTests(unittest.TestCase):
             },
         })
         self.assertEqual(candidates(result), [])
+
+    def test_resolved_raw_bucket_does_not_open_numbered_fuzzy_fallback(self):
+        source = {norm('Sky Sport Bundesliga'): ['base', 'uhd'],
+                  norm('Sky Sport Bundesliga 1'): ['numbered-one'],
+                  '__raw_names__': {'sky sport bundesliga': ['base'],
+                                    'sky sport bundesliga uhd': ['uhd']}}
+        result = mapping(self.tmp_path, [stream('Sky Sport Bundesliga', country='DE')],
+                         {'epgshare01:DE1': source})
+        self.assertEqual([(c['source_id'], c['method']) for c in candidates(result)],
+                         [('base', 'exact')])
 
     def test_bare_callsign_does_not_pick_dt2_before_dt(self):
         result = mapping(self.tmp_path, [stream('FOX: TN | Nashville | WZTV', country='US')], {}, {

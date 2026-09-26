@@ -198,6 +198,8 @@ class TestHostBreaker(unittest.TestCase):
             # review finding). norm() strips 'channel' as filler -> 'test one'.
             self.assertEqual(index['epgshare01:B1'].get('test one'),
                              ['test.ch'])
+            self.assertEqual(index['epgshare01:B1']['__raw_names__']['test channel one'],
+                             ['test.ch'])
 
 
 class TestStatusShape(unittest.TestCase):

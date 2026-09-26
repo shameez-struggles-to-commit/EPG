@@ -147,13 +147,8 @@ def main(argv=None):
     coverage = load_json(args.coverage) if args.coverage and os.path.exists(args.coverage) else {}
 
     # rebuild SourceIndex per source (shared with build_mapping logic)
-    idx = {}
-    for s, name_to_ids in sources_index.items():
-        i = SourceIndex()
-        for n, ids in name_to_ids.items():
-            for cid in ids:
-                i.add(n, cid)
-        idx[s] = i
+    from build_mapping import rebuild_index
+    idx = {source: rebuild_index(names) for source, names in sources_index.items()}
 
     # Count individual linear stream entries, never a same-name proxy.
     measured, stream_rows = measured_coverage(streams, mapping, args.guide, now)
@@ -214,7 +209,7 @@ def main(argv=None):
         size = os.path.getsize(path) if path and os.path.exists(path) else None
         entry = {'file': os.path.basename(path) if path else None,
                  'size_bytes': size,
-                 'indexed_channels': len(sources_index.get(src, {})),
+                 'indexed_channels': len(idx[src].by_name) if src in idx else 0,
                  'currency': None}
         if path and os.path.exists(path):
             entry['currency'] = currency_share(path)
