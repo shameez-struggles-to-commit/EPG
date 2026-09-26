@@ -547,9 +547,8 @@ def main():
             'bad_rows_dropped': bad_intervals,
         }
         json.dump(cov, open(args.coverage_out, 'w'), indent=1)
-        denom = max(1, cov['linear_unique_names'])
-        print(f'[coverage] {cov["covered_channels"]}/{denom} linear unique names covered '
-              f'({100*cov["covered_channels"]/denom:.1f}%)')
+        print(f'[coverage] {cov["covered_channels"]} guide IDs | '
+              f'{cov["linear_unique_names"]} linear unique names')
 
 
 if __name__ == '__main__':
