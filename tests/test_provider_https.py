@@ -62,6 +62,15 @@ class ProviderHttpsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, '^Unsafe HTTPS metadata redirect$'):
             handler.redirect_request(second, None, 302, 'Moved', {}, 'https://files.example/alice.xml')
 
+    def test_cross_origin_host_rejects_credentials_on_all_hops(self):
+        handler = provider_http.SafeRedirectHandler(True)
+        initial = Request('https://panel.example/xmltv.php?username=alice&password=PrivateSecret')
+        first = handler.redirect_request(initial, None, 302, 'Moved', {}, 'https://guide.example/guide.xml')
+        for request in (initial, first):
+            for host in ('PrivateSecret.example', 'privatesecret.example', 'alice.example', '%50rivateSecret.example'):
+                with self.subTest(host=host), self.assertRaises(ValueError):
+                    handler.redirect_request(request, None, 302, 'Moved', {}, 'https://' + host + '/guide.xml')
+
     def test_cross_origin_metadata_redirect_is_rejected(self):
         old = Request('https://panel.example/player_api.php?username=alice&password=private')
         with self.assertRaises(ValueError):

@@ -55,10 +55,10 @@ class SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
             # Decode the entire path, not individual segments: credentials may be
             # embedded in filenames or split by encoded delimiters. Repeated
             # encoding must not conceal a credential from this check.
-            path = new.path
+            path = new.netloc + new.path
             unsafe_path = False
             while True:
-                if any(secret in path for secret in secrets):
+                if any(secret.casefold() in path.casefold() for secret in secrets):
                     unsafe_path = True
                     break
                 decoded = urllib.parse.unquote(path)
