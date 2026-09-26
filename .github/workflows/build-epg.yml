@@ -339,7 +339,8 @@ jobs:
           report = (
               f"EPG Coverage Report\n"
               f"===================\n"
-              f"Linear channels covered: {cov['covered_channels']} / {cov['linear_unique_names']}\n"
+              f"Guide channel entries: {cov['covered_channels']}\n"
+              f"Linear unique display names (not a coverage denominator): {cov['linear_unique_names']}\n"
               f"Channels in guide: {new_chans}\n"
               f"Programmes: {new_progs}\n"
               f"Selected streams: {cov.get('selected_streams', 'n/a')}\n"
@@ -374,6 +375,7 @@ jobs:
             --sources data/sources.json \
             --sources-index data/sources_index.json \
             --coverage data/coverage.json \
+            --guide public/guide.xml.gz \
             --out public/coverage_gaps.json \
             --prev-url https://shameez-struggles-to-commit.github.io/EPG/coverage_gaps.json
 
