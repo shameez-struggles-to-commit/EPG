@@ -145,6 +145,7 @@ def usable_programmes(plist, min_stop, now_key=None):
 PLACEHOLDER_TOKENS = ('teleshopping', 'no match', 'no information',
                       'channel off air', 'servicestatus', 'channel no longer available',
                       'programmes start at')
+UNKNOWN_PROGRAMME_TITLES = {'to be announced', 'tba'}
 
 
 def _clean_title(t):
@@ -153,7 +154,7 @@ def _clean_title(t):
 
 def _is_placeholder_title(t):
     t = _clean_title(t)
-    return any(x == t or x in t for x in PLACEHOLDER_TOKENS)
+    return t in UNKNOWN_PROGRAMME_TITLES or any(x == t or x in t for x in PLACEHOLDER_TOKENS)
 
 
 def is_placeholder_schedule(plist):
@@ -546,9 +547,8 @@ def main():
             'bad_rows_dropped': bad_intervals,
         }
         json.dump(cov, open(args.coverage_out, 'w'), indent=1)
-        denom = max(1, cov['linear_unique_names'])
-        print(f'[coverage] {cov["covered_channels"]}/{denom} linear unique names covered '
-              f'({100*cov["covered_channels"]/denom:.1f}%)')
+        print(f'[coverage] {cov["covered_channels"]} guide IDs | '
+              f'{cov["linear_unique_names"]} linear unique names')
 
 
 if __name__ == '__main__':
