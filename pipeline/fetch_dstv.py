@@ -65,7 +65,7 @@ def norm_iso(ts):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('out')
-    ap.add_argument('--days', type=int, default=2)
+    ap.add_argument('--days', type=int, default=4)
     ap.add_argument('--country', default='zaf')
     args = ap.parse_args()
 
