@@ -337,12 +337,25 @@ def country_hint(cat_name):
 
 def rebuild_index(name_to_ids):
     idx = SourceIndex()
+    idx.raw_names.update(name_to_ids.get('__raw_names__', {}))
     for n, ids in name_to_ids.items():
+        if n == '__raw_names__':
+            continue
         idx.by_name[n] = list(ids)
         for t in n.split():
             idx._token_index[t].add(n)
-    idx._size = len(name_to_ids)
+    idx._size = len(idx.by_name)
     return idx
+
+
+def resolve_raw_identity(idx, query, ids):
+    """Narrow a collided norm bucket only with a unique literal display-name.
+
+    Missing raw metadata (older snapshots), multiple literal IDs and IDs not
+    in the collided bucket all fail closed; never use programme density/order.
+    """
+    raw = set(idx.raw_names.get(query.strip().casefold(), ())) & set(ids)
+    return next(iter(raw)) if len(raw) == 1 else None
 
 
 def epg_q(name):
@@ -724,10 +737,15 @@ def main():
                     terr = SKY_TERRITORY.get(cc)
                     if terr:
                         eids = [e for e in eids if isinstance(e, str) and e.startswith(terr + '#')]
+                resolved = None
                 if len(set(eids)) > 1:
-                    stats[f'{src}:ambiguous-alias'] += 1
-                    ambiguous_name_sources.add(src)
-                    continue
+                    ambiguous_name_sources.add(src)  # never fall through to fuzzy
+                    resolved = resolve_raw_identity(src_idx[src], alias, eids)
+                    if resolved is None:
+                        stats[f'{src}:ambiguous-alias'] += 1
+                        continue
+                    eids = [resolved]
+                    stats[f'{src}:raw-alias-resolved'] += 1
                 if eids:
                     alias_tier = src_tier(src) + (20 if alias_diaspora else 0)
                     cands.append((alias_tier, src, eids[0],
@@ -805,10 +823,15 @@ def main():
                 # norm() strips "tv", so "Real Madrid TV" would collide with the
                 # "Real Madrid" team feed — require the exact claimed name.
                 eids = [e for e in eids if e == qname]
+            resolved = None
             if len(set(eids)) > 1:
-                stats[f'{src}:ambiguous-exact'] += 1
-                ambiguous_name_sources.add(src)
-                continue
+                ambiguous_name_sources.add(src)  # raw resolution must not enable fuzzy
+                resolved = resolve_raw_identity(src_idx[src], qname, eids)
+                if resolved is None:
+                    stats[f'{src}:ambiguous-exact'] += 1
+                    continue
+                eids = [resolved]
+                stats[f'{src}:raw-exact-resolved'] += 1
             if eids:
                 # classify: 'exact' if the source is allowed for this stream
                 # through its normal gating, else 'diaspora' (exact-match

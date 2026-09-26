@@ -238,7 +238,7 @@ def build_index(path, greek_translit=False):
             if greek_translit:
                 lat = _gr_translit(name)
                 if lat != name:
-                    idx.add(lat, m.group('id'))
+                    idx.add(lat, m.group('id'), raw=False)
     return idx
 
 
@@ -388,8 +388,11 @@ def main():
                 if m['source'] in index:
                     for k, v in idx.by_name.items():
                         index[m['source']].setdefault(k, []).extend(v)
+                    for k, v in idx.raw_names.items():
+                        index[m['source']]['__raw_names__'].setdefault(k, []).extend(v)
                 else:
                     index[m['source']] = {k: list(v) for k, v in idx.by_name.items()}
+                    index[m['source']]['__raw_names__'] = {k: list(v) for k, v in idx.raw_names.items()}
                 cs = build_callsign_index(m['file'])
                 if m['source'] in callsigns:
                     for k, v in cs.items():
