@@ -28,7 +28,7 @@ def row(cid, start, stop, title='Show'):
 
 class MeasuredCoverageTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(dir='/Users/shameez/.hermes/cache/scratch')
+        self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         self.streams = [
