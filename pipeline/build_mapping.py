@@ -324,8 +324,10 @@ def build_collision_split(streams):
 
 
 def build_identity_map(streams):
-    """Alias for the public identity-map operation (kept for callers)."""
-    return build_collision_split(streams)
+    """Stable private bootstrap in production; legacy mode for old callers."""
+    from stable_identity import load_seed, stable_map
+    seed = load_seed()
+    return stable_map(streams, seed) if seed is not None else build_collision_split(streams)
 
 
 def country_hint(cat_name):
@@ -627,6 +629,9 @@ def main():
     # xtream:<stream_id> ids so unrelated streams stop merging into one
     # XMLTV channel (882 streams were affected).
     identity_map = build_identity_map(streams)
+    # Output identity is persisted. Provider-ID trust must still be checked
+    # against today's lineup, independently of the frozen client identifier.
+    current_provider_identity = build_collision_split(streams)
     stats['identity-synthetic-streams'] = sum(1 for x in identity_map.values() if x.startswith('xtream:'))
     print(f'[mapping] identity map: {len(identity_map)} streams; '
           f"{stats['identity-synthetic-streams']} synthetic xtream IDs")
@@ -832,12 +837,13 @@ def main():
         # provider id is a COLLISION id (split onto xtream:<sid>) must not
         # ALSO emit the shared id as a candidate.
         prov_cid = str(s.get('epg_channel_id') or '').strip()
-        if is_real_epg_id(prov_cid) and identity_map.get(sid) == prov_cid:
+        if (is_real_epg_id(prov_cid) and identity_map.get(sid) == prov_cid
+                and current_provider_identity.get(sid) == prov_cid):
             cands.append((1.5, 'provider', prov_cid, 'epg-id', 1.0))
             stats['provider:epg-id'] += 1
-        elif is_real_epg_id(prov_cid) and identity_map.get(sid, '').startswith('xtream:'):
-            # synthetic identity: the duplicated provider ID is not safe as a
-            # shared candidate; source/name candidates may still provide data.
+        elif is_real_epg_id(prov_cid):
+            # Changed or duplicated provider IDs must not be rescued through
+            # provider-name matching. Regional source candidates remain usable.
             stats['provider:epg-id-split'] += 1
         else:
             pn = norm(name)

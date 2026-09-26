@@ -274,7 +274,10 @@ jobs:
           PYEOF
 
       - name: Build mapping (fallback cascade + country gating + call signs)
+        env:
+          EPG_IDENTITY_SEED: ${{ secrets.EPG_IDENTITY_SEED }}
         run: |
+          python3 -c 'from pipeline.stable_identity import require_seed; require_seed()'
           python3 pipeline/build_mapping.py \
             --streams data/streams.json \
             --sources-index data/sources_index.json \
@@ -391,6 +394,14 @@ jobs:
             data/guide_health.json
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Bind guide to stable identity version
+        env:
+          EPG_IDENTITY_SEED: ${{ secrets.EPG_IDENTITY_SEED }}
+        run: >-
+          python3 pipeline/release_manifest.py
+          --guide public/guide.xml.gz --out public/release.json
+          --revision "${{ github.sha }}" --run-id "${{ github.run_id }}"
 
       - name: Package Pages artifact
         run: |
