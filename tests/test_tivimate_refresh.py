@@ -57,6 +57,22 @@ class PlaylistVerificationTest(unittest.TestCase):
             self.assertEqual(result['outcome'], 'dry-run')
             self.assertEqual(result['guide_ids'], 1)
 
+    def test_post_write_release_change_restores_verified_previous_bytes(self):
+        state = {'blob': b'old', 'release': 1}
+        def send(blob):
+            state['blob'] = blob
+            state['release'] = 2
+        with self.assertRaises(ValueError):
+            tivimate_refresh.publish_verified(b'new', lambda: state['blob'], send,
+                                               lambda: state['release'], 1, sleep=lambda _: None)
+        self.assertEqual(state['blob'], b'old')
+
+    def test_same_count_lineup_replacement_is_rejected(self):
+        old = b'#EXTINF:-1 tvg-id="a",A\n#EXTINF:-1 tvg-id="b",B\n'
+        new = old.replace(b'tvg-id="b"', b'tvg-id="c"')
+        with self.assertRaises(ValueError):
+            tivimate_refresh.validate_continuity(old, new)
+
     def test_changed_release_stops_before_write(self):
         from unittest.mock import Mock
         send = Mock()

@@ -42,6 +42,14 @@ def exact_roundtrip(expected, received):
     return expected == received
 
 
+def validate_continuity(previous, candidate, minimum_retained=0.95):
+    def ids(blob):
+        return {html.unescape(x) for x in re.findall(r'tvg-id="([^"]+)"', blob.decode('utf-8'))}
+    old, new = ids(previous), ids(candidate)
+    if not old or len(old & new) < len(old) * minimum_retained:
+        raise ValueError('Provider lineup identity changed unexpectedly')
+
+
 def publish_verified(expected, fetch_current, send, fetch_release, release, sleep=time.sleep):
     current = fetch_current()
     if fetch_release() != release:
@@ -57,7 +65,17 @@ def publish_verified(expected, fetch_current, send, fetch_release, release, slee
             fresh = None
         if fresh is not None and exact_roundtrip(expected, fresh):
             if fetch_release() != release:
-                raise ValueError('Playlist saved, but guide release changed during verification')
+                # Restore only our own write. Never overwrite a third party's
+                # newer playlist. The last accepted version is the rollback anchor.
+                if fetch_current() != expected:
+                    raise ValueError('Guide changed and playlist changed externally; recovery required')
+                send(current)
+                for recovery_attempt in range(4):
+                    if fetch_current() == current:
+                        raise ValueError('Guide release changed; previous playlist restored and verified')
+                    if recovery_attempt < 3:
+                        sleep(15)
+                raise ValueError('Guide changed; playlist rollback could not be verified')
             return 'updated'
         if attempt < 3:
             sleep(15)
@@ -160,12 +178,10 @@ def run_refresh(config, dry_run=False):
                         raise ValueError('Unexpected playlist readback host')
                     return fetch_bytes(url + '?check=' + str(time.time_ns()))
                 return item['content'].encode('utf-8')
+            previous = fetch_current()
+            validate_continuity(previous, expected, config.get('minimum_retained_fraction', 0.95))
+            (work / 'previous.m3u').write_bytes(previous)
             def send(blob):
-                previous = fetch_current()
-                old_count = previous.count(b'#EXTINF:')
-                if len(streams) < old_count * 0.95:
-                    raise ValueError('Playlist shrank unexpectedly; retaining prior version')
-                (work / 'previous.m3u').write_bytes(previous)
                 payload = json.dumps({'description': 'TiviMate companion playlist (auto-updated)',
                                       'files': {filename: {'content': blob.decode('utf-8')}}}).encode()
                 run_command([gh, 'api', '-X', 'PATCH', 'gists/' + gist, '--input', '-'], input=payload)
