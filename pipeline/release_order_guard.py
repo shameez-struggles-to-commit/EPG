@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -16,21 +17,81 @@ import urllib.request
 
 API_ROOT = "https://api.github.com"
 HTTP_TIMEOUT_SECONDS = 30
+# Bounded retry shape of a transient GET: total attempts and the wait before
+# retrying attempt N+1 (N * base seconds). A server-requested Retry-After
+# longer than the cap is treated as non-retryable: the guard fails closed
+# rather than sleep past its bound.
+GET_ATTEMPTS = 3
+RETRY_BACKOFF_SECONDS = 2.0
+RETRY_AFTER_CAP_SECONDS = 60.0
 
 
 class ReleaseOrderError(Exception):
     """Raised when GitHub data cannot prove release ordering safely."""
 
 
+class _TemporaryGitHubError(Exception):
+    """Internal marker: this GET failure is eligible for a bounded retry."""
+
+    def __init__(self, kind, retry_after=None):
+        super().__init__(kind)
+        self.kind = kind
+        self.retry_after = retry_after
+
+
+def _retryable_status(status):
+    return status == 429 or 500 <= status <= 599
+
+
+def _retry_after_seconds(headers):
+    """Numeric Retry-After seconds, or None when absent/invalid (backoff covers it)."""
+    try:
+        value = headers.get("Retry-After")
+    except AttributeError:
+        return None
+    if value is None:
+        return None
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 0 else None
+
+
 class GitHubClient:
     """Small read-only GitHub API client used by the release guard."""
 
-    def __init__(self, token=None, opener=None):
+    def __init__(self, token=None, opener=None, attempts=None, sleep=None):
         self.token = token if token is not None else os.environ.get("GH_TOKEN", "")
         self._opener = opener or urllib.request.urlopen
+        self._attempts = GET_ATTEMPTS if attempts is None else attempts
+        self._sleep = sleep or time.sleep
         self.last_link_header = ""
 
     def get(self, path, params=None):
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                return self._get_once(path, params)
+            except _TemporaryGitHubError as exc:
+                if exc.retry_after is not None:
+                    if exc.retry_after > RETRY_AFTER_CAP_SECONDS:
+                        raise ReleaseOrderError(
+                            "GitHub GET failed for %s: %s, retry-after %.0fs exceeds %.0fs bound"
+                            % (path, exc.kind, exc.retry_after, RETRY_AFTER_CAP_SECONDS)
+                        ) from exc.__cause__
+                    wait = exc.retry_after
+                else:
+                    wait = RETRY_BACKOFF_SECONDS * attempt
+                if attempt >= self._attempts:
+                    raise ReleaseOrderError(
+                        "GitHub GET failed for %s: %s after %d attempts"
+                        % (path, exc.kind, attempt)
+                    ) from exc.__cause__
+                self._sleep(wait)
+
+    def _get_once(self, path, params):
         query = urllib.parse.urlencode(params or {})
         url = API_ROOT + path + ("?" + query if query else "")
         headers = {
@@ -42,20 +103,33 @@ class GitHubClient:
         request = urllib.request.Request(url, headers=headers, method="GET")
         try:
             response = self._opener(request, timeout=HTTP_TIMEOUT_SECONDS)
-            with response:
-                status = getattr(response, "status", 200)
-                self.last_link_header = getattr(response, "headers", {}).get("Link", "")
-                if status < 200 or status >= 300:
-                    raise ReleaseOrderError("GitHub GET returned HTTP %s" % status)
-                try:
-                    body = response.read()
-                    return json.loads(body.decode("utf-8"))
-                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                    raise ReleaseOrderError("GitHub GET returned invalid JSON") from exc
-        except ReleaseOrderError:
-            raise
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise ReleaseOrderError("GitHub GET failed") from exc
+        except urllib.error.HTTPError as exc:
+            if _retryable_status(exc.code):
+                raise _TemporaryGitHubError(
+                    "HTTP %s" % exc.code, _retry_after_seconds(exc.headers)
+                ) from exc
+            raise ReleaseOrderError(
+                "GitHub GET failed for %s: HTTP %s" % (path, exc.code)
+            ) from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise _TemporaryGitHubError("transport error (%s)" % type(exc).__name__) from exc
+        with response:
+            status = getattr(response, "status", 200)
+            self.last_link_header = getattr(response, "headers", {}).get("Link", "")
+            if status < 200 or status >= 300:
+                if _retryable_status(status):
+                    raise _TemporaryGitHubError(
+                        "HTTP %s" % status,
+                        _retry_after_seconds(getattr(response, "headers", {})),
+                    )
+                raise ReleaseOrderError("GitHub GET failed for %s: HTTP %s" % (path, status))
+            try:
+                body = response.read()
+                return json.loads(body.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ReleaseOrderError(
+                    "GitHub GET returned invalid JSON for %s" % path
+                ) from exc
 
 
 def _positive_integer(value, field):
