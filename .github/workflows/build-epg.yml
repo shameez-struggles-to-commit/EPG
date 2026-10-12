@@ -454,6 +454,11 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
+    # Hard external wall: the helper enforces its 180s budget with checks
+    # before each fetch, after the fetch phase, and before reporting success,
+    # but socket timeouts are per operation, so this job timeout is what
+    # bounds a single pathological transfer.
+    timeout-minutes: 5
     # Run after every trigger, not only the daily schedule. A push/manual build
     # can also publish a bad Pages object and must be checked before release is
     # considered healthy.
@@ -467,7 +472,9 @@ jobs:
       # release for a few seconds after the deployment reports success. The
       # helper re-fetches release.json AND guide.xml.gz with a fresh nonce on
       # every attempt inside a 180s total deadline, re-runs every published
-      # check, and fails closed after exhaustion.
+      # check, and fails closed after exhaustion. It never reports success
+      # once the deadline has passed; the job timeout above is the hard wall
+      # for per-operation socket timeouts.
       - name: Check deployed guide (bounded verified retry)
         env:
           EXPECTED_RUN_ID: ${{ github.run_id }}

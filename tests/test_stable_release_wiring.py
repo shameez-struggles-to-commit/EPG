@@ -20,5 +20,13 @@ class StableReleaseWiringTest(unittest.TestCase):
         self.assertIn('release.get("guide_sha256")', helper)
         self.assertIn('no current programmes', helper)
 
+    def test_health_job_has_bounded_external_wall(self):
+        workflow = (ROOT / '.github/workflows/build-epg.yml').read_text(encoding='utf-8')
+        health = workflow.split('  health:\n', 1)[1].split('  final-status:\n', 1)[0]
+        # The helper's 180s budget is enforced with checks; per-operation
+        # socket timeouts cannot bound one transfer, so the job needs its own
+        # small wall-clock timeout.
+        self.assertIn('timeout-minutes: 5', health)
+
 
 if __name__=='__main__':unittest.main()

@@ -5,8 +5,15 @@ Fails closed: unless one attempt observes the full release match within the
 total deadline, the command exits non-zero. Every attempt re-fetches both
 release.json and guide.xml.gz with a fresh nonce (best-effort cache busting;
 the retry loop, not the nonce, is what absorbs CDN propagation lag) and
-re-runs every published check. The deadline covers all HTTP work and sleeps,
-and each request timeout is clamped to the remaining budget.
+re-runs every published check.
+
+Deadline semantics are bounded, not a hard per-transfer wall: the budget is
+checked before each fetch, after the fetch phase, and again before reporting
+success, so once the clock has passed the deadline no attempt can succeed.
+Socket timeouts apply per operation rather than per transfer, so one
+trickling read can still run past the remaining budget before a check
+notices; the workflow health job's own timeout-minutes is the external wall
+for that case.
 """
 
 from __future__ import annotations
@@ -15,6 +22,7 @@ import argparse
 import datetime
 import gzip
 import hashlib
+import http.client
 import json
 import re
 import sys
@@ -101,10 +109,16 @@ def check_deployed_release(release_bytes, guide_bytes, expected_run_id, expected
 def run_verified_health_check(base_url, expected_run_id, expected_revision, fetch=None, clock=None,
                               sleep=None, total_budget=DEFAULT_TOTAL_BUDGET_SECONDS,
                               attempt_interval=DEFAULT_ATTEMPT_INTERVAL_SECONDS,
-                              request_timeout=REQUEST_TIMEOUT_SECONDS, today=None):
+                              request_timeout=REQUEST_TIMEOUT_SECONDS, today=None,
+                              failure_history=None):
     """Retry until the deployed release matches, or the total budget expires.
 
     Returns (succeeded, attempts, failures); failures describes the last attempt.
+    No success is reported once the deadline has passed: the attempt path
+    checks the deadline after the fetch phase, and this loop checks it again
+    after validation. failure_history, when provided, receives (attempt,
+    failures) for every non-matching attempt so callers can report recovered
+    mismatches without losing evidence.
     """
     fetch = fetch or fetch_public
     clock = clock or time.monotonic
@@ -123,8 +137,12 @@ def run_verified_health_check(base_url, expected_run_id, expected_revision, fetc
             fetch, clock, base, expected_run_id, expected_revision, today,
             deadline, request_timeout,
         )
+        if not failures and deadline - clock() <= 0:
+            failures = ["deadline exhausted after validation"]
         if not failures:
             return True, attempts, []
+        if failure_history is not None:
+            failure_history.append((attempts, list(failures)))
         remaining = deadline - clock()
         if remaining <= 0:
             return False, attempts, failures
@@ -144,18 +162,25 @@ def _attempt_once(fetch, clock, base, expected_run_id, expected_revision, today,
             return ["deadline exhausted before fetching %s" % name]
         try:
             status, body = fetch(url, min(request_timeout, remaining))
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            OSError,
+            http.client.HTTPException,
+        ) as exc:
             return ["%s fetch failed (%s)" % (name, type(exc).__name__)]
         if status != 200:
             return ["%s HTTP %s" % (name, status)]
         bodies[name] = body
+    if deadline - clock() <= 0:
+        return ["deadline exhausted after fetching"]
     return check_deployed_release(
         bodies["release.json"], bodies["guide.xml.gz"],
         expected_run_id, expected_revision, today,
     )
 
 
-def main(argv=None, fetch=None, clock=None, sleep=None):
+def main(argv=None, fetch=None, clock=None, sleep=None, today=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", required=True, help="Pages base URL, e.g. https://owner.github.io/EPG")
     parser.add_argument("--expected-run-id", required=True)
@@ -163,6 +188,7 @@ def main(argv=None, fetch=None, clock=None, sleep=None):
     parser.add_argument("--total-budget-seconds", type=float, default=DEFAULT_TOTAL_BUDGET_SECONDS)
     parser.add_argument("--attempt-interval-seconds", type=float, default=DEFAULT_ATTEMPT_INTERVAL_SECONDS)
     args = parser.parse_args(argv)
+    failure_history = []
     succeeded, attempts, failures = run_verified_health_check(
         args.base_url,
         args.expected_run_id,
@@ -172,7 +198,16 @@ def main(argv=None, fetch=None, clock=None, sleep=None):
         sleep=sleep,
         total_budget=args.total_budget_seconds,
         attempt_interval=args.attempt_interval_seconds,
+        today=today,
+        failure_history=failure_history,
     )
+    # Report mismatches from attempts that were retried before the final
+    # outcome, so recovered evidence is not lost. Only public metadata values
+    # (field names, expected/observed values, counts) appear here.
+    earlier_attempts = failure_history if succeeded else failure_history[:-1]
+    for attempt, attempt_failures in earlier_attempts:
+        for failure in attempt_failures:
+            print("attempt %d mismatch: %s" % (attempt, failure), file=sys.stderr)
     if succeeded:
         print(
             "OK: deployed release verified after %d attempt(s): run_id=%s revision=%s"

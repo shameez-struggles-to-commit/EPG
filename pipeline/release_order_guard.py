@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _datetime
+import http.client
 import json
 import os
 import re
@@ -24,6 +25,15 @@ HTTP_TIMEOUT_SECONDS = 30
 GET_ATTEMPTS = 3
 RETRY_BACKOFF_SECONDS = 2.0
 RETRY_AFTER_CAP_SECONDS = 60.0
+# Transport-phase faults eligible for a bounded retry: connection faults and
+# timeouts around the request, and truncated/garbled HTTP bodies
+# (http.client.HTTPException, e.g. IncompleteRead/BadStatusLine) during read.
+_TRANSIENT_TRANSPORT_ERRORS = (
+    urllib.error.URLError,
+    TimeoutError,
+    OSError,
+    http.client.HTTPException,
+)
 
 
 class ReleaseOrderError(Exception):
@@ -111,7 +121,7 @@ class GitHubClient:
             raise ReleaseOrderError(
                 "GitHub GET failed for %s: HTTP %s" % (path, exc.code)
             ) from exc
-        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        except _TRANSIENT_TRANSPORT_ERRORS as exc:
             raise _TemporaryGitHubError("transport error (%s)" % type(exc).__name__) from exc
         with response:
             status = getattr(response, "status", 200)
@@ -125,6 +135,11 @@ class GitHubClient:
                 raise ReleaseOrderError("GitHub GET failed for %s: HTTP %s" % (path, status))
             try:
                 body = response.read()
+            except _TRANSIENT_TRANSPORT_ERRORS as exc:
+                raise _TemporaryGitHubError(
+                    "transport error (%s)" % type(exc).__name__
+                ) from exc
+            try:
                 return json.loads(body.decode("utf-8"))
             except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                 raise ReleaseOrderError(

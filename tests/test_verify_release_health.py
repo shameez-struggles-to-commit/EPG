@@ -1,12 +1,15 @@
 import contextlib
+import datetime
 import gzip
 import hashlib
+import http.client
 import io
 import json
 import pathlib
 import sys
 import unittest
 import urllib.error
+from unittest.mock import patch
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -230,6 +233,216 @@ class HealthRetryTest(unittest.TestCase):
                 self.assertEqual(sleeps, [15.0])
                 self.assertEqual(len(calls), 3)
 
+    def test_body_transport_faults_are_retried_then_recover(self):
+        fresh = fresh_guide()
+        manifest = release_bytes(EXPECTED_RUN_ID, REVISION, fresh)
+        faults = (
+            ("IncompleteRead", http.client.IncompleteRead(b"partial body")),
+            ("BadStatusLine", http.client.BadStatusLine("garbage")),
+        )
+        for label, fault in faults:
+            with self.subTest(fault=label):
+                calls = []
+                clock = FakeClock()
+                sleeps = []
+
+                def fetch(url, timeout, fault=fault):
+                    calls.append((url, timeout))
+                    if len(calls) == 1:
+                        raise fault
+                    return (200, manifest if "release.json" in url else fresh)
+
+                ok, attempts, failures = health.run_verified_health_check(
+                    "https://pages.test/EPG",
+                    EXPECTED_RUN_ID,
+                    REVISION,
+                    fetch=fetch,
+                    clock=clock,
+                    sleep=make_sleep(clock, sleeps),
+                    today=TODAY,
+                )
+
+                self.assertTrue(ok)
+                self.assertEqual(attempts, 2)
+                self.assertEqual(failures, [])
+                self.assertEqual(len(calls), 3)
+                self.assertEqual(sleeps, [15.0])
+
+    def test_persistent_body_faults_fail_closed_with_retry_evidence(self):
+        calls = []
+        clock = FakeClock()
+        sleeps = []
+
+        def fetch(url, timeout):
+            calls.append(url)
+            raise http.client.IncompleteRead(b"partial body")
+
+        ok, attempts, failures = health.run_verified_health_check(
+            "https://pages.test/EPG",
+            EXPECTED_RUN_ID,
+            REVISION,
+            fetch=fetch,
+            clock=clock,
+            sleep=make_sleep(clock, sleeps),
+            total_budget=30.0,
+            attempt_interval=15.0,
+            today=TODAY,
+        )
+
+        self.assertFalse(ok)
+        self.assertEqual(attempts, 2)
+        self.assertTrue(any("IncompleteRead" in failure for failure in failures), failures)
+        self.assertEqual(sleeps, [15.0, 15.0])
+
+    def test_truncated_public_body_is_retried_end_to_end(self):
+        fresh = fresh_guide()
+        manifest = release_bytes(EXPECTED_RUN_ID, REVISION, fresh)
+        calls = []
+        clock = FakeClock()
+        sleeps = []
+
+        class TruncatedBody:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                raise http.client.IncompleteRead(b"partial body")
+
+        class Body:
+            def __init__(self, payload):
+                self.status = 200
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return self.payload
+
+        def fake_urlopen(request, timeout):
+            payload = manifest if "release.json" in request.full_url else fresh
+            calls.append(request.full_url)
+            if len(calls) == 1:
+                return TruncatedBody()
+            return Body(payload)
+
+        with patch.object(health.urllib.request, "urlopen", fake_urlopen):
+            ok, attempts, failures = health.run_verified_health_check(
+                "https://pages.test/EPG",
+                EXPECTED_RUN_ID,
+                REVISION,
+                clock=clock,
+                sleep=make_sleep(clock, sleeps),
+                today=TODAY,
+            )
+
+        self.assertTrue(ok)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(failures, [])
+        self.assertEqual(len(calls), 3)
+
+    def test_no_success_after_fetch_phase_exceeds_deadline(self):
+        fresh = fresh_guide()
+        manifest = release_bytes(EXPECTED_RUN_ID, REVISION, fresh)
+        clock = FakeClock()
+        sleeps = []
+
+        def fetch(url, timeout):
+            clock.now += 6.0
+            return (200, manifest if "release.json" in url else fresh)
+
+        ok, attempts, failures = health.run_verified_health_check(
+            "https://pages.test/EPG",
+            EXPECTED_RUN_ID,
+            REVISION,
+            fetch=fetch,
+            clock=clock,
+            sleep=make_sleep(clock, sleeps),
+            total_budget=10.0,
+            attempt_interval=15.0,
+            today=TODAY,
+        )
+
+        self.assertFalse(ok)
+        self.assertEqual(attempts, 1)
+        self.assertEqual(sleeps, [])
+        self.assertTrue(
+            any("deadline exhausted after fetching" in failure for failure in failures), failures
+        )
+
+    def test_no_success_after_validation_exceeds_deadline(self):
+        fresh = fresh_guide()
+        manifest = release_bytes(EXPECTED_RUN_ID, REVISION, fresh)
+        clock = FakeClock()
+        sleeps = []
+        real_check = health.check_deployed_release
+
+        def slow_check(*args, **kwargs):
+            clock.now += 20.0
+            return real_check(*args, **kwargs)
+
+        def fetch(url, timeout):
+            clock.now += 2.0
+            return (200, manifest if "release.json" in url else fresh)
+
+        with patch.object(health, "check_deployed_release", slow_check):
+            ok, attempts, failures = health.run_verified_health_check(
+                "https://pages.test/EPG",
+                EXPECTED_RUN_ID,
+                REVISION,
+                fetch=fetch,
+                clock=clock,
+                sleep=make_sleep(clock, sleeps),
+                total_budget=10.0,
+                attempt_interval=15.0,
+                today=TODAY,
+            )
+
+        self.assertFalse(ok)
+        self.assertEqual(attempts, 1)
+        self.assertEqual(sleeps, [])
+        self.assertTrue(
+            any("deadline exhausted after validation" in failure for failure in failures), failures
+        )
+
+    def test_deadline_exhausted_before_second_fetch_is_reported(self):
+        clock = FakeClock()
+        sleeps = []
+        fetched = []
+
+        def fetch(url, timeout):
+            fetched.append(url)
+            clock.now += 20.0
+            return (200, b"{}")
+
+        ok, attempts, failures = health.run_verified_health_check(
+            "https://pages.test/EPG",
+            EXPECTED_RUN_ID,
+            REVISION,
+            fetch=fetch,
+            clock=clock,
+            sleep=make_sleep(clock, sleeps),
+            total_budget=15.0,
+            attempt_interval=15.0,
+            today=TODAY,
+        )
+
+        self.assertFalse(ok)
+        self.assertEqual(attempts, 1)
+        self.assertEqual(len(fetched), 1)
+        self.assertTrue(
+            any("deadline exhausted before fetching guide.xml.gz" in failure for failure in failures),
+            failures,
+        )
+
 
 class DeployedReleaseGuardTest(unittest.TestCase):
     def test_full_match_passes_with_no_failures(self):
@@ -347,6 +560,7 @@ class HealthMainTest(unittest.TestCase):
                 fetch=fetch,
                 clock=clock,
                 sleep=make_sleep(clock, []),
+                today=TODAY,
             )
 
         self.assertEqual(exit_code, 0)
@@ -374,6 +588,88 @@ class HealthMainTest(unittest.TestCase):
             )
 
         self.assertEqual(exit_code, 1)
+
+    def test_main_prints_recovered_attempt_mismatch_evidence(self):
+        fresh = fresh_guide()
+        stale = b"previous release"
+        first_attempt = (release_bytes("111", "f" * 40, stale), stale)
+        final_attempt = (release_bytes(EXPECTED_RUN_ID, REVISION, fresh), fresh)
+        calls = []
+        clock = FakeClock()
+
+        def fetch(url, timeout):
+            attempt = (len(calls) // 2) + 1
+            calls.append((url, timeout))
+            release, guide = first_attempt if attempt == 1 else final_attempt
+            return (200, release if "release.json" in url else guide)
+
+        with contextlib.redirect_stdout(io.StringIO()) as output, \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            exit_code = health.main(
+                ["--base-url", "https://pages.test/EPG",
+                 "--expected-run-id", EXPECTED_RUN_ID,
+                 "--expected-revision", REVISION],
+                fetch=fetch,
+                clock=clock,
+                sleep=make_sleep(clock, []),
+                today=TODAY,
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn("OK:", output.getvalue())
+        self.assertIn("attempt 1 mismatch:", errors.getvalue())
+        self.assertIn("run_id '111'", errors.getvalue())
+        # Only public metadata values are printed, never response bodies.
+        self.assertNotIn("previous release", errors.getvalue())
+
+    def test_main_success_verification_is_not_wall_clock_coupled(self):
+        fresh = fresh_guide()
+        manifest = release_bytes(EXPECTED_RUN_ID, REVISION, fresh)
+        clock = FakeClock()
+        bootstrap = ["--base-url", "https://pages.test/EPG",
+                     "--expected-run-id", EXPECTED_RUN_ID,
+                     "--expected-revision", REVISION]
+
+        def fetch(url, timeout):
+            return (200, manifest if "release.json" in url else fresh)
+
+        class FrozenDate(datetime.date):
+            @classmethod
+            def today(cls):
+                return datetime.date(2026, 10, 17)
+
+        class FrozenDatetime:
+            date = FrozenDate
+
+        with patch.object(health, "datetime", FrozenDatetime):
+            # Control: with the wall clock past the fixture guide's max stop
+            # (20261016) the check legitimately fails closed. This is the
+            # scheduled failure the regression pins: the success path must not
+            # consult the real clock.
+            control_clock = FakeClock()
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                control_exit = health.main(
+                    bootstrap + ["--total-budget-seconds", "30",
+                                 "--attempt-interval-seconds", "15"],
+                    fetch=fetch,
+                    clock=control_clock,
+                    sleep=make_sleep(control_clock, []),
+                )
+            self.assertEqual(control_exit, 1)
+
+            # Injected date: the CLI success path is stable regardless of the
+            # real clock.
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                exit_code = health.main(
+                    bootstrap,
+                    fetch=fetch,
+                    clock=clock,
+                    sleep=make_sleep(clock, []),
+                    today=TODAY,
+                )
+            self.assertEqual(exit_code, 0)
+            self.assertIn("verified", output.getvalue())
 
 
 if __name__ == "__main__":

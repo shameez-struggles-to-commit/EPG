@@ -1,4 +1,5 @@
 import contextlib
+import http.client
 import io
 import json
 import pathlib
@@ -36,6 +37,42 @@ class ErrorClient:
 
     def get(self, path, params=None):
         raise guard.ReleaseOrderError(self.message)
+
+
+class ReadFaultResponse:
+    """A 200 response whose body read raises the given transport fault."""
+
+    status = 200
+    headers = {}
+
+    def __init__(self, fault):
+        self.fault = fault
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        raise self.fault
+
+
+class JsonResponse:
+    status = 200
+    headers = {}
+
+    def __init__(self, payload=b'{"ok": true}'):
+        self.payload = payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self):
+        return self.payload
 
 
 def fixture(name):
@@ -524,6 +561,96 @@ class ReleaseOrderGuardTest(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertEqual(len(calls), 4)
         self.assertEqual(sleeps, [2.0])
+
+    def test_read_phase_timeout_error_is_retried_then_recovers(self):
+        calls = []
+        sleeps = []
+
+        def opener(request, timeout):
+            calls.append(request)
+            if len(calls) == 1:
+                return ReadFaultResponse(TimeoutError("read timed out"))
+            return JsonResponse()
+
+        client = guard.GitHubClient(token="test-token", opener=opener, sleep=sleeps.append)
+
+        result = client.get("/repos/owner/repo/actions/runs/100")
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(sleeps, [2.0])
+
+    def test_read_phase_connection_reset_is_retried_then_recovers(self):
+        calls = []
+        sleeps = []
+
+        def opener(request, timeout):
+            calls.append(request)
+            if len(calls) == 1:
+                return ReadFaultResponse(ConnectionResetError("connection reset by peer"))
+            return JsonResponse()
+
+        client = guard.GitHubClient(token="test-token", opener=opener, sleep=sleeps.append)
+
+        result = client.get("/repos/owner/repo/actions/runs/100")
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(sleeps, [2.0])
+
+    def test_read_phase_incomplete_read_is_retried_then_recovers(self):
+        calls = []
+        sleeps = []
+
+        def opener(request, timeout):
+            calls.append(request)
+            if len(calls) == 1:
+                return ReadFaultResponse(http.client.IncompleteRead(b"partial body"))
+            return JsonResponse()
+
+        client = guard.GitHubClient(token="test-token", opener=opener, sleep=sleeps.append)
+
+        result = client.get("/repos/owner/repo/actions/runs/100")
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(sleeps, [2.0])
+
+    def test_read_phase_faults_fail_closed_after_bounded_attempts(self):
+        calls = []
+        sleeps = []
+
+        def opener(request, timeout):
+            calls.append(request)
+            return ReadFaultResponse(ConnectionResetError("connection reset by peer"))
+
+        client = guard.GitHubClient(token="test-token", opener=opener, sleep=sleeps.append)
+
+        with self.assertRaisesRegex(guard.ReleaseOrderError, "ConnectionResetError") as caught:
+            client.get("/repos/owner/repo/actions/runs/100")
+
+        message = str(caught.exception)
+        self.assertIn("after 3 attempts", message)
+        self.assertIn("/repos/owner/repo/actions/runs/100", message)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(sleeps, [2.0, 4.0])
+
+    def test_main_reports_read_phase_fault_cleanly(self):
+        client = guard.GitHubClient(
+            token="test-token",
+            opener=lambda request, timeout: ReadFaultResponse(TimeoutError("read timed out")),
+            sleep=lambda seconds: None,
+        )
+
+        with contextlib.redirect_stderr(io.StringIO()) as errors:
+            exit_code = guard.main(
+                ["--repository", "owner/repo", "--workflow", "build-epg.yml", "--run-id", "100"],
+                client_factory=lambda token: client,
+            )
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("release-order guard blocked", errors.getvalue())
+        self.assertIn("TimeoutError", errors.getvalue())
 
 
 if __name__ == "__main__":
